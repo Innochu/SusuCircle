@@ -1,0 +1,47 @@
+# Ignore build outputs
+bin/
+obj/
+**/bin/
+**/obj/
+
+# Visual Studio files
+.vs/
+*.suo
+*.user
+*.userosscache
+*.userprefs
+*.mdb
+
+# IDE folders
+.vscode/
+
+# Git
+.git/
+.gitignore
+
+# Docker compose files (if you build from a compose context)
+docker-compose*
+
+# Logs, test results, artifacts
+TestResults/
+*.log
+artifacts/
+
+# Node
+node_modules/
+
+# Publish output
+publish/
+
+# Local settings and secrets
+appsettings.Development.json
+secrets.json
+
+# Other
+*.db
+*.zip
+*.tar
+*.gz
+
+# HTTP request files
+*.http
