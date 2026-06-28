@@ -2,13 +2,14 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy everything and restore
-COPY . ./
-WORKDIR /src/src/SusuCircle.Api
-RUN dotnet restore "SusuCircle.Api.csproj"
+# Copy the entire solution structure
+COPY . .
 
-# Build and publish
-RUN dotnet publish "SusuCircle.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
+# Restore using the correct relative path to the csproj
+RUN dotnet restore "src/SusuCircle.Api/SusuCircle.Api.csproj"
+
+# Build and publish using the correct path
+RUN dotnet publish "src/SusuCircle.Api/SusuCircle.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 # Runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
