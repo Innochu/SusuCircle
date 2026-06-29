@@ -79,6 +79,7 @@ public class GetAllMembersHandler(AppDbContext db) : IRequestHandler<GetAllMembe
                 ContributionStatus.Overpaid => "Paid",
                 ContributionStatus.Partial  => "Partial",
                 ContributionStatus.Defaulted => "Defaulted",
+                ContributionStatus.Overdue => "Overdue",
                 _                           => "Pending"
             };
 

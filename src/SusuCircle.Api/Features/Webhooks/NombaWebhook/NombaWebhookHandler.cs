@@ -19,17 +19,17 @@ public record WebhookResult(bool Processed, string Message);
 
 /// <summary>
 /// Core reconciliation engine — implements the decision tree from the FRD.
-///
+/// 
 /// On inbound transfer:
 ///  1. Match VA number → member
 ///  2. Find active contribution for member + current cycle
 ///  3. Idempotency check on transaction reference
 ///  4. paidAmount += amount
 ///  5. balance = expected - creditApplied - paidAmount
-///     = 0    → Paid
-///     > 0    → Partial (notify shortfall)
-///     &lt; 0    → Overpaid (credit excess to next cycle)
-///  6. Emit SignalR event for live dashboard refresh
+///      = 0    → Paid
+///      > 0    → Partial (notify shortfall)
+///      < 0    → Overpaid (credit excess to next cycle)
+///  6. Trigger real-time SignalR push and automated transaction receipts email.
 /// </summary>
 public class NombaWebhookHandler(
     AppDbContext db,
@@ -96,9 +96,9 @@ public class NombaWebhookHandler(
         }
 
         // Step 4 & 5: Reconcile
-        contribution.PaidAmount           += payload.Amount;
-        contribution.NombaTransactionRef   = payload.TransactionReference;
-        contribution.PaidAt               = payload.Timestamp;
+        contribution.PaidAmount += payload.Amount;
+        contribution.NombaTransactionRef = payload.TransactionReference;
+        contribution.PaidAt = payload.Timestamp;
 
         var balance = contribution.ExpectedAmount - contribution.CreditApplied - contribution.PaidAmount;
 
@@ -110,14 +110,14 @@ public class NombaWebhookHandler(
             contribution.Status = ContributionStatus.Paid;
             UpdateStreak(member, onTime: contribution.PaidAt <= contribution.DueDate);
             notifTitle = "Payment confirmed ✅";
-            notifBody  = $"Your contribution of ₦{contribution.PaidAmount:N0} for cycle {circle.CurrentCycle} has been received in full.";
+            notifBody = $"Your contribution of ₦{contribution.PaidAmount:N0} for cycle {circle.CurrentCycle} has been received in full.";
             logger.LogInformation("Member {MemberId} PAID cycle {Cycle}", member.Id, circle.CurrentCycle);
         }
         else if (balance > 0)
         {
             contribution.Status = ContributionStatus.Partial;
             notifTitle = "Partial payment received ⚠️";
-            notifBody  = $"₦{contribution.PaidAmount:N0} received. You still owe ₦{balance:N0} for cycle {circle.CurrentCycle}. Please pay before {contribution.DueDate:dd MMM yyyy}.";
+            notifBody = $"₦{contribution.PaidAmount:N0} received. You still owe ₦{balance:N0} for cycle {circle.CurrentCycle}. Please pay before {contribution.DueDate:dd MMM yyyy}.";
             logger.LogInformation("Member {MemberId} PARTIAL cycle {Cycle} — balance ₦{Balance}", member.Id, circle.CurrentCycle, balance);
         }
         else
@@ -130,14 +130,26 @@ public class NombaWebhookHandler(
             await ApplyCreditToNextCycleAsync(member.Id, circle, excess, ct);
 
             notifTitle = "Payment confirmed + credit applied ✅";
-            notifBody  = $"₦{contribution.PaidAmount:N0} received. You overpaid by ₦{excess:N0} — this has been credited to your next cycle.";
+            notifBody = $"₦{contribution.PaidAmount:N0} received. You overpaid by ₦{excess:N0} — this has been credited to your next cycle.";
             logger.LogInformation("Member {MemberId} OVERPAID cycle {Cycle} — credit ₦{Excess}", member.Id, circle.CurrentCycle, excess);
         }
 
         await db.SaveChangesAsync(ct);
 
-        // Notify member
+        // Notify member via internal notification system
         await notifications.SendAsync(member.Id, NotificationType.PaymentReceived, notifTitle, notifBody, ct);
+
+        // REQUIREMENT: Email send to member when a circle collection has been successfully credited
+        if (!string.IsNullOrWhiteSpace(member.Email))
+        {
+            await notifications.SendCircleCreditedEmailAsync(
+                member.Email,
+                member.Name,
+                circle.Name,
+                payload.Amount,
+                contribution.Status.ToString()
+            );
+        }
 
         // Step 6: ADASHI credit score recalculation
         if (circle.Plan == PlanType.ADASHI)
@@ -150,12 +162,12 @@ public class NombaWebhookHandler(
         await hub.Clients.Group(circle.Id.ToString())
             .SendAsync("ContributionUpdated", new
             {
-                circleId     = circle.Id,
-                memberId     = member.Id,
-                memberName   = member.Name,
-                cycleNumber  = circle.CurrentCycle,
-                status       = contribution.Status.ToString(),
-                paidAmount   = contribution.PaidAmount,
+                circleId = circle.Id,
+                memberId = member.Id,
+                memberName = member.Name,
+                cycleNumber = circle.CurrentCycle,
+                status = contribution.Status.ToString(),
+                paidAmount = contribution.PaidAmount,
                 balance,
             }, ct);
 
@@ -165,7 +177,7 @@ public class NombaWebhookHandler(
     private static void UpdateStreak(Member member, bool onTime)
     {
         if (onTime) member.ConsecutiveOnTimeStreak++;
-        else        member.ConsecutiveOnTimeStreak = 0;
+        else member.ConsecutiveOnTimeStreak = 0;
     }
 
     private async Task ApplyCreditToNextCycleAsync(Guid memberId, Circle circle, decimal excess, CancellationToken ct)
@@ -183,13 +195,13 @@ public class NombaWebhookHandler(
             // Pre-create next cycle contribution with credit applied
             db.Contributions.Add(new Contribution
             {
-                Id             = Guid.NewGuid(),
-                MemberId       = memberId,
-                CircleId       = circle.Id,
-                CycleNumber    = nextCycle,
+                Id = Guid.NewGuid(),
+                MemberId = memberId,
+                CircleId = circle.Id,
+                CycleNumber = nextCycle,
                 ExpectedAmount = circle.ContributionAmount,
-                CreditApplied  = excess,
-                DueDate        = circle.NextContributionDate.AddMonths(1),
+                CreditApplied = excess,
+                DueDate = circle.NextContributionDate.AddMonths(1),
             });
         }
     }
@@ -218,33 +230,45 @@ public class NombaWebhookHandler(
 
         if (!payoutReady) return;
 
-        // Find the member whose turn it is
-        var payoutMember = await db.Members
-            .Where(m => m.CircleId == circle.Id && m.Status == MemberStatus.Active)
-            .OrderBy(m => m.PayoutPosition)
-            .Skip(circle.CurrentCycle - 1)
-            .FirstOrDefaultAsync(ct);
-
-        if (payoutMember is null) return;
-
         // Check payout hasn't already been created for this cycle
         var existing = await db.Payouts
             .AnyAsync(p => p.CircleId == circle.Id && p.CycleNumber == circle.CurrentCycle, ct);
 
         if (existing) return;
 
-        var totalCollected = cycleContributions.Sum(c => c.PaidAmount);
+        // REQUIREMENT: Correctly select the eligible member based on BAM vs ADASHI plan mechanics
+        Member? payoutMember = null;
+
+        if (circle.Plan == PlanType.BAM)
+        {
+            // For BAM, payout positions are forced to 0. The payout target is designated via group admin 
+            // or defaults atomically to the pool escrow/admin placeholder account.
+            payoutMember = await db.Members
+                .Where(m => m.CircleId == circle.Id && m.Status == MemberStatus.Active && m.PayoutPosition == 0)
+                .FirstOrDefaultAsync(ct);
+        }
+        else if (circle.Plan == PlanType.ADASHI)
+        {
+            // For ADASHI, positions scale sequentially (1, 2, 3...). Target maps dynamically to the active index cycle.
+            payoutMember = await db.Members
+                .Where(m => m.CircleId == circle.Id && m.Status == MemberStatus.Active)
+                .OrderBy(m => m.PayoutPosition)
+                .Skip(circle.CurrentCycle - 1)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        if (payoutMember is null) return;
 
         db.Payouts.Add(new Payout
         {
-            Id             = Guid.NewGuid(),
-            CircleId       = circle.Id,
-            MemberId       = payoutMember.Id,
-            CycleNumber    = circle.CurrentCycle,
+            Id = Guid.NewGuid(),
+            CircleId = circle.Id,
+            MemberId = payoutMember.Id,
+            CycleNumber = circle.CurrentCycle,
             ExpectedAmount = circle.ContributionAmount * activeMembers,
             DisbursedAmount = 0,
-            Status         = PayoutStatus.Pending,
-            ScheduledAt    = DateTime.UtcNow,
+            Status = PayoutStatus.Pending,
+            ScheduledAt = DateTime.UtcNow,
         });
 
         logger.LogInformation("Payout queued for member {MemberId} circle {CircleId} cycle {Cycle}", payoutMember.Id, circle.Id, circle.CurrentCycle);
@@ -285,5 +309,5 @@ public static class NombaWebhookEndpoint
             })
         .WithName("NombaWebhook")
         .WithTags("Webhooks")
-        .AllowAnonymous(); // Auth is HMAC signature, not JWT
+        .AllowAnonymous(); // Auth is handled securely via HMAC signature validation
 }

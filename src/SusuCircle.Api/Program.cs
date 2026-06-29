@@ -3,6 +3,7 @@ using Microsoft.OpenApi.Models;
 using Serilog;
 using SusuCircle.Api.Common.Extensions;
 using SusuCircle.Api.Common.Middleware;
+using SusuCircle.Api.Common.Services;
 using SusuCircle.Api.Features.Auth.Login;
 using SusuCircle.Api.Features.Auth.RefreshToken;
 using SusuCircle.Api.Features.Auth.Register;
@@ -52,7 +53,9 @@ builder.Services
         .AllowAnyHeader()
         .AllowAnyMethod()
         .AllowCredentials()));
-
+builder.Services.Configure<SmtpSettings>(
+    builder.Configuration.GetSection("SmtpSettings"));
+builder.Services.AddScoped<INotificationService, NotificationService>();
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
 var app = builder.Build();
@@ -98,6 +101,7 @@ GetMemberPassportEndpoint.Map(app);
 GetReportsEndpoint.Map(app);
 GetContributionBoardEndpoint.Map(app);
 GetContributionsEndpoint.Map(app);
+MemberDashboardEndpoint.Map(app);
 
 TriggerPayoutEndpoint.Map(app);
 GetPayoutsEndpoint.Map(app);

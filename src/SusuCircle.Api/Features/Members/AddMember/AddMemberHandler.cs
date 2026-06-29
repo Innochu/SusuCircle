@@ -137,8 +137,6 @@
 
 
 
-
-
 using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -196,7 +194,13 @@ public class AddMemberHandler(AppDbContext db, INotificationService notification
         if (circle.Members.Any(m => m.Phone == cmd.Phone))
             throw new ConflictException("A member with this phone number already exists in this circle.");
 
-        var position = circle.Members.Count + 1;
+        // RULE: Force payout position to 0 for BAM, auto-increment only for ADASHI groups
+        int calculatedPosition = 0;
+        if (circle.Plan == PlanType.ADASHI)
+        {
+            var maxCurrentPosition = circle.Members.Any() ? circle.Members.Max(m => m.PayoutPosition) : 0;
+            calculatedPosition = maxCurrentPosition + 1;
+        }
 
         var member = new Member
         {
@@ -205,7 +209,7 @@ public class AddMemberHandler(AppDbContext db, INotificationService notification
             Name = cmd.Name,
             Phone = cmd.Phone,
             Email = cmd.Email,
-            PayoutPosition = position,
+            PayoutPosition = calculatedPosition,
             Status = MemberStatus.Active,
             VirtualAccountId = cmd.VirtualAccountId,
             VirtualAccountNumber = cmd.VirtualAccountNumber,
@@ -229,9 +233,22 @@ public class AddMemberHandler(AppDbContext db, INotificationService notification
         if (circle.Status == CircleStatus.Setup)
             circle.Status = CircleStatus.Active;
 
+        // Perform transactional database persistence first
         await db.SaveChangesAsync(ct);
 
-        // Notify member
+        // REQUIREMENT: Email send to newly added member containing welcome state and virtual account info
+        if (!string.IsNullOrWhiteSpace(cmd.Email))
+        {
+            await notifications.SendMemberWelcomeEmailAsync(
+                cmd.Email,
+                cmd.Name,
+                circle.Name,
+                cmd.VirtualAccountNumber ?? "Pending Activation",
+                circle.ContributionAmount
+            );
+        }
+
+        // Emit inside application event notifications timeline
         if (!string.IsNullOrEmpty(cmd.VirtualAccountNumber))
         {
             await notifications.SendAsync(member.Id, NotificationType.MemberAdded,
@@ -255,12 +272,15 @@ public class AddMemberHandler(AppDbContext db, INotificationService notification
 public static class AddMemberEndpoint
 {
     public static void Map(IEndpointRouteBuilder app) =>
-        app.MapPost("/api/circles/members",
-            async (AddMemberCommand cmd, IMediator mediator) =>
+        app.MapPost("/api/circles/{circleId:guid}/members",
+            async (Guid circleId, AddMemberCommand cmd, IMediator mediator) =>
             {
-                var result = await mediator.Send(cmd);
+                // Sync the path parameters explicitly into the payload context
+                var normalizedCmd = cmd with { CircleId = circleId };
+                var result = await mediator.Send(normalizedCmd);
+
                 return Results.Created($"/api/members/{result.Id}",
-                    ApiResponse<MemberDto>.Ok(result, "Member saved successfully."));
+                    ApiResponse<MemberDto>.Ok(result, "Member saved successfully and welcome notifications queued."));
             })
         .WithName("AddMember")
         .WithTags("Members")

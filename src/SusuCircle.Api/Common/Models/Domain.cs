@@ -12,7 +12,7 @@ public enum PayoutOrderType { Sequential, Random, Bidding }
 
 public enum MemberStatus { Active, Suspended, Completed }
 
-public enum ContributionStatus { Pending, Partial, Paid, Overpaid, Defaulted }
+public enum ContributionStatus { Pending, Partial, Paid, Overpaid, Defaulted, Overdue }
 
 public enum PayoutStatus { Pending, Processing, Completed, Failed }
 
