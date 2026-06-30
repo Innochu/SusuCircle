@@ -102,10 +102,8 @@ GetReportsEndpoint.Map(app);
 GetContributionBoardEndpoint.Map(app);
 GetContributionsEndpoint.Map(app);
 MemberDashboardEndpoint.Map(app);
-
 TriggerPayoutEndpoint.Map(app);
 GetPayoutsEndpoint.Map(app);
-
 NotificationEndpoints.Map(app);
 NombaWebhookEndpoint.Map(app);
 
