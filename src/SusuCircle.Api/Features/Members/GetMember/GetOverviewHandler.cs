@@ -30,6 +30,11 @@ public record ActiveCircleDto(
     int MaxMembers,
     decimal ContributionAmount,
     string Frequency,
+    // Lifetime total paid into this circle (all cycles)
+    decimal TotalCollected,
+    // Current-cycle collection figures
+    decimal CycleCollected,
+    decimal CycleExpected,
     int CollectionRatePercent,
     string Status);
 
@@ -48,17 +53,17 @@ public class GetOverviewHandler(AppDbContext db) : IRequestHandler<GetOverviewQu
             .Where(c => c.AdminId == q.AdminId)
             .ToListAsync(ct);
 
-        var activeCircles  = circles.Where(c => c.Status == CircleStatus.Active).ToList();
-        var totalMembers   = activeCircles.Sum(c => c.Members.Count(m => m.Status == MemberStatus.Active));
+        var activeCircles = circles.Where(c => c.Status == CircleStatus.Active).ToList();
+        var totalMembers = activeCircles.Sum(c => c.Members.Count(m => m.Status == MemberStatus.Active));
         var totalCollected = circles.SelectMany(c => c.Contributions).Sum(c => c.PaidAmount);
 
-        // Collection rate this cycle across all circles
+        // Collection rate this cycle across all circles (count-based: fully-paid members / total)
         var currentContribs = circles
             .SelectMany(c => c.Contributions.Where(x => x.CycleNumber == c.CurrentCycle))
             .ToList();
 
-        var paidCount     = currentContribs.Count(c => c.Status is ContributionStatus.Paid or ContributionStatus.Overpaid);
-        var totalCount    = currentContribs.Count;
+        var paidCount = currentContribs.Count(c => c.Status is ContributionStatus.Paid or ContributionStatus.Overpaid);
+        var totalCount = currentContribs.Count;
         var collectionRate = totalCount > 0 ? (int)Math.Round((double)paidCount / totalCount * 100) : 0;
 
         // Trend chart — last 7 months expected vs actual
@@ -68,10 +73,13 @@ public class GetOverviewHandler(AppDbContext db) : IRequestHandler<GetOverviewQu
         var circleList = activeCircles.Select(c =>
         {
             var cycleContribs = c.Contributions.Where(x => x.CycleNumber == c.CurrentCycle).ToList();
-            var paid          = cycleContribs.Sum(x => x.PaidAmount);
-            var expected      = cycleContribs.Sum(x => x.ExpectedAmount);
-            var rate          = expected > 0 ? (int)Math.Round(paid / expected * 100) : 0;
+            var cycleCollected = cycleContribs.Sum(x => x.PaidAmount);
+            var cycleExpected = cycleContribs.Sum(x => x.ExpectedAmount);
+            var rate = cycleExpected > 0 ? (int)Math.Round(cycleCollected / cycleExpected * 100) : 0;
             var activeMembers = c.Members.Count(m => m.Status == MemberStatus.Active);
+
+            // Lifetime total paid into this circle across all cycles
+            var circleTotalCollected = c.Contributions.Sum(x => x.PaidAmount);
 
             return new ActiveCircleDto(
                 c.Id,
@@ -82,6 +90,9 @@ public class GetOverviewHandler(AppDbContext db) : IRequestHandler<GetOverviewQu
                 c.MaxMembers,
                 c.ContributionAmount,
                 c.Frequency.ToString(),
+                circleTotalCollected,
+                cycleCollected,
+                cycleExpected,
                 rate,
                 c.Status.ToString());
         });
@@ -98,14 +109,14 @@ public class GetOverviewHandler(AppDbContext db) : IRequestHandler<GetOverviewQu
 
     private async Task<IEnumerable<TrendPointDto>> BuildTrendsAsync(Guid adminId, CancellationToken ct)
     {
-        var now    = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
         var trends = new List<TrendPointDto>();
 
         for (int i = 6; i >= 0; i--)
         {
-            var month      = now.AddMonths(-i);
+            var month = now.AddMonths(-i);
             var monthStart = new DateTime(month.Year, month.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-            var monthEnd   = monthStart.AddMonths(1);
+            var monthEnd = monthStart.AddMonths(1);
 
             var contribs = await db.Contributions
                 .Include(c => c.Circle)
