@@ -356,6 +356,12 @@ public static class NombaWebhookEndpoint
                 var rawBody = await reader.ReadToEndAsync();
                 req.Body.Position = 0;
 
+                // TEMPORARY — remove once the payload shape is confirmed against
+                // NombaWebhookPayload.cs. LogWarning (not LogInformation) so it's
+                // easy to spot/filter in Render's log viewer. This logs the FULL
+                // raw payload, so don't leave it in past the verification step.
+                logger.LogWarning("RAW NOMBA WEBHOOK: {Body}", rawBody);
+
                 // CORRECTED: real header is "nomba-signature" (lowercase, hyphenated),
                 // not "X-Nomba-Signature". ASP.NET header lookup is case-insensitive,
                 // but the NAME itself was wrong, so this always returned empty before.
