@@ -41,5 +41,5 @@ public static class GetPayoutsEndpoint
             })
         .WithName("GetPayouts")
         .WithTags("Payouts")
-        .RequireAuthorization();
+        .AllowAnonymous();
 }

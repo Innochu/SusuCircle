@@ -55,7 +55,7 @@ public static class NotificationEndpoints
             })
             .WithName("GetNotifications")
             .WithTags("Notifications")
-            .RequireAuthorization();
+            .AllowAnonymous();
 
         app.MapPatch("/api/members/{memberId:guid}/notifications/read",
             async (Guid memberId, IMediator mediator) =>
@@ -65,6 +65,6 @@ public static class NotificationEndpoints
             })
             .WithName("MarkNotificationsRead")
             .WithTags("Notifications")
-            .RequireAuthorization();
+            .AllowAnonymous();
     }
 }

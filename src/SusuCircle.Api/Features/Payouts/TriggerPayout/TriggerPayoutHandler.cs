@@ -168,7 +168,7 @@ public class TriggerPayoutHandler(
 public static class TriggerPayoutEndpoint
 {
     public static void Map(IEndpointRouteBuilder app) =>
-        app.MapPost("/api/circles/{circleId:guid}/payout",
+        app.MapPost("/circles/{circleId:guid}/payout",
             async (Guid circleId, IMediator mediator, bool adminOverride = false) =>
             {
                 var result = await mediator.Send(new TriggerPayoutCommand(circleId, adminOverride));
@@ -176,5 +176,5 @@ public static class TriggerPayoutEndpoint
             })
         .WithName("TriggerPayout")
         .WithTags("Payouts")
-        .RequireAuthorization();
+        .AllowAnonymous();
 }

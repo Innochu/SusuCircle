@@ -17,9 +17,11 @@ using SusuCircle.Api.Features.Members.AddMember;
 using SusuCircle.Api.Features.Members.GetMember;
 using SusuCircle.Api.Features.Members.GetMemberPassport;
 using SusuCircle.Api.Features.Members.ListMembers;
+using SusuCircle.Api.Features.Notifications;
 using SusuCircle.Api.Features.Notifications.GetNotifications;
 using SusuCircle.Api.Features.Payouts.GetPayouts;
 using SusuCircle.Api.Features.Payouts.TriggerPayout;
+using SusuCircle.Api.Features.Reconciliation.Match;
 using SusuCircle.Api.Features.Webhooks.NombaWebhook;
 using SusuCircle.Api.Infrastructure;
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -106,6 +108,8 @@ TriggerPayoutEndpoint.Map(app);
 GetPayoutsEndpoint.Map(app);
 NotificationEndpoints.Map(app);
 NombaWebhookEndpoint.Map(app);
+AdminNotificationEndpoints.Map(app);
+MatchTransactionEndpoints.Map(app);
 
 // ── Hangfire recurring jobs ───────────────────────────────────────────────────
 

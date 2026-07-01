@@ -12,6 +12,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Contribution> Contributions => Set<Contribution>();
     public DbSet<Payout> Payouts => Set<Payout>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<UnmatchedTransaction> UnmatchedTransactions => Set<UnmatchedTransaction>();
+    public DbSet<AdminNotification> AdminNotifications => Set<AdminNotification>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
