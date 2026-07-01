@@ -75,7 +75,7 @@ public class CreateCircleHandler(AppDbContext db) : IRequestHandler<CreateCircle
             PayoutOrder          = cmd.PayoutOrder,
             StartDate            = cmd.StartDate,
             NextContributionDate = nextDate,
-            Status               = CircleStatus.Setup,
+            Status               = CircleStatus.Active
         };
 
         db.Circles.Add(circle);
