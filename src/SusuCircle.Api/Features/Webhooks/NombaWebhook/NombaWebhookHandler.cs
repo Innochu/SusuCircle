@@ -20,21 +20,26 @@ public record WebhookResult(bool Processed, string Message);
 /// <summary>
 /// Core reconciliation engine.
 ///
+/// CHANGED (this revision): IAdminNotifier wired in on all three event paths —
+/// payment success/partial/overpaid, payout queued, and payout success/failed/
+/// refund. Previously these events only produced MEMBER-facing notifications
+/// (the Notification table) — the admin's own Notifications screen
+/// (AdminNotification table, image 7 from earlier) never received anything
+/// because nothing in this file ever called IAdminNotifier. Both tables are
+/// legitimate and serve different audiences: Notification = member-facing,
+/// AdminNotification = admin-facing. See earlier discussion — don't discard
+/// either one.
+///
 /// CORRECTED against the real Nomba webhook contract
 /// (https://developer.nomba.com/products/webhooks/introduction):
 ///   - event_type "payment_success" is what fires for an inbound VA credit —
 ///     there is no separate "virtual_account.funded" or "INWARD_TRANSFER" event.
 ///   - The VA that received the money is data.transaction.aliasAccountNumber
 ///     (data.customer.accountNumber is a DIFFERENT field — the sender/payer's
-///     own account, not the receiving VA — so matching on customer.accountNumber
-///     would silently match the wrong side of the transfer).
-///   - Amount is data.transaction.transactionAmount, in plain NAIRA (verified:
-///     the docs' own example pairs "transactionAmount": 1000 with "fee": 5 — a
-///     0.5% fee only makes sense in naira, and the VA-creation endpoint uses
-///     "expectedAmount": "200.00" — a decimal naira string, not kobo).
+///     own account, not the receiving VA).
+///   - Amount is data.transaction.transactionAmount, in plain NAIRA.
 ///   - Idempotency uses requestId (Nomba's documented dedupe key for webhook
-///     retries), NOT the transaction reference alone — a retried delivery of the
-///     same event reuses the same requestId.
+///     retries), NOT the transaction reference alone.
 ///
 /// On inbound transfer (payment_success):
 ///  1. Match aliasAccountNumber → member's VirtualAccountNumber
@@ -45,11 +50,12 @@ public record WebhookResult(bool Processed, string Message);
 ///      = 0    → Paid
 ///      > 0    → Partial (notify shortfall)
 ///      < 0    → Overpaid (credit excess to next cycle)
-///  6. Trigger real-time SignalR push and automated transaction receipts email.
+///  6. Trigger real-time SignalR push, member notification + email, AND admin notification.
 /// </summary>
 public class NombaWebhookHandler(
     AppDbContext db,
     INotificationService notifications,
+    IAdminNotifier adminNotifier,
     IHubContext<CircleHub> hub,
     ICreditScoreService creditScore,
     ILogger<NombaWebhookHandler> logger)
@@ -59,9 +65,6 @@ public class NombaWebhookHandler(
     {
         var payload = cmd.Payload;
 
-        // CORRECTED: real event type is "payment_success", not "INWARD_TRANSFER".
-        // We only care about money landing in a member's VA here; payouts
-        // (payout_success / payout_failed) are handled by a separate branch below.
         if (payload.EventType is "payout_success" or "payout_failed" or "payout_refund")
         {
             return await HandlePayoutEventAsync(payload, ct);
@@ -73,8 +76,6 @@ public class NombaWebhookHandler(
             return new WebhookResult(false, "Event type not handled.");
         }
 
-        // CORRECTED: the receiving VA number is on the transaction object,
-        // not the customer object (customer.accountNumber is the payer's account).
         var receivingAccountNumber = payload.Data.Transaction.AliasAccountNumber;
 
         if (string.IsNullOrWhiteSpace(receivingAccountNumber))
@@ -120,8 +121,7 @@ public class NombaWebhookHandler(
             return new WebhookResult(false, "No open contribution for current cycle.");
         }
 
-        // Step 3: Idempotency check — CORRECTED to use requestId, Nomba's
-        // documented dedupe key for webhook retries (not transactionId alone).
+        // Step 3: Idempotency check on requestId
         var duplicate = await db.Contributions
             .AnyAsync(c => c.NombaTransactionRef == payload.RequestId, ct);
 
@@ -142,6 +142,9 @@ public class NombaWebhookHandler(
 
         string notifTitle;
         string notifBody;
+        AdminNotificationType adminEventType;
+        string adminTitle;
+        string adminBody;
 
         if (balance == 0)
         {
@@ -149,6 +152,9 @@ public class NombaWebhookHandler(
             UpdateStreak(member, onTime: contribution.PaidAt <= contribution.DueDate);
             notifTitle = "Payment confirmed ✅";
             notifBody = $"Your contribution of ₦{contribution.PaidAmount:N0} for cycle {circle.CurrentCycle} has been received in full.";
+            adminEventType = AdminNotificationType.PaymentReceived;
+            adminTitle = "Payment received";
+            adminBody = $"{member.Name} paid ₦{amount:N0} · {circle.Name} — Cycle {circle.CurrentCycle}";
             logger.LogInformation("Member {MemberId} PAID cycle {Cycle}", member.Id, circle.CurrentCycle);
         }
         else if (balance > 0)
@@ -156,6 +162,9 @@ public class NombaWebhookHandler(
             contribution.Status = ContributionStatus.Partial;
             notifTitle = "Partial payment received ⚠️";
             notifBody = $"₦{contribution.PaidAmount:N0} received. You still owe ₦{balance:N0} for cycle {circle.CurrentCycle}. Please pay before {contribution.DueDate:dd MMM yyyy}.";
+            adminEventType = AdminNotificationType.PartialPayment;
+            adminTitle = "Partial payment received";
+            adminBody = $"{member.Name} paid ₦{amount:N0} of ₦{contribution.ExpectedAmount:N0} · {circle.Name} — Cycle {circle.CurrentCycle} (₦{balance:N0} outstanding)";
             logger.LogInformation("Member {MemberId} PARTIAL cycle {Cycle} — balance ₦{Balance}", member.Id, circle.CurrentCycle, balance);
         }
         else
@@ -168,11 +177,15 @@ public class NombaWebhookHandler(
 
             notifTitle = "Payment confirmed + credit applied ✅";
             notifBody = $"₦{contribution.PaidAmount:N0} received. You overpaid by ₦{excess:N0} — this has been credited to your next cycle.";
+            adminEventType = AdminNotificationType.PaymentReceived;
+            adminTitle = "Payment received (overpaid)";
+            adminBody = $"{member.Name} paid ₦{amount:N0} · {circle.Name} — Cycle {circle.CurrentCycle} (₦{excess:N0} credited forward)";
             logger.LogInformation("Member {MemberId} OVERPAID cycle {Cycle} — credit ₦{Excess}", member.Id, circle.CurrentCycle, excess);
         }
 
         await db.SaveChangesAsync(ct);
 
+        // Member-facing: in-app notification + email
         await notifications.SendAsync(member.Id, NotificationType.PaymentReceived, notifTitle, notifBody, ct);
 
         if (!string.IsNullOrWhiteSpace(member.Email))
@@ -180,6 +193,10 @@ public class NombaWebhookHandler(
             await notifications.SendCircleCreditedEmailAsync(
                 member.Email, member.Name, circle.Name, amount, contribution.Status.ToString());
         }
+
+        // Admin-facing: NEW — this is what was missing.
+        await adminNotifier.NotifyAsync(circle.AdminId, adminEventType, adminTitle, adminBody,
+            circle.Id, circle.Name, ct);
 
         if (circle.Plan == PlanType.ADASHI)
             await creditScore.RecalculateAsync(member.Id, ct);
@@ -202,10 +219,6 @@ public class NombaWebhookHandler(
     }
 
     // ── Payout confirmation events ──────────────────────────────────────────────
-    // NEW: payout_success / payout_failed / payout_refund arrive as separate
-    // webhook events. Previously nothing listened for these — payouts were only
-    // ever assumed complete from the synchronous transfer API response, which
-    // can return PENDING. This closes that gap.
     private async Task<WebhookResult> HandlePayoutEventAsync(NombaWebhookPayload payload, CancellationToken ct)
     {
         var merchantTxRef = payload.Data.Transaction.MerchantTxRef;
@@ -216,7 +229,10 @@ public class NombaWebhookHandler(
             return new WebhookResult(false, "No merchantTxRef on payload.");
         }
 
+        // NEW: load Circle + Member so we have AdminId/Name for the admin notification.
         var payout = await db.Payouts
+            .Include(p => p.Circle)
+            .Include(p => p.Member)
             .FirstOrDefaultAsync(p => p.NombaTransferRef == merchantTxRef, ct);
 
         if (payout is null)
@@ -225,25 +241,45 @@ public class NombaWebhookHandler(
             return new WebhookResult(false, "Payout not found for reference.");
         }
 
+        AdminNotificationType adminEventType;
+        string adminTitle;
+        string adminBody;
+
         switch (payload.EventType)
         {
             case "payout_success":
                 payout.Status = PayoutStatus.Completed;
                 payout.DisbursedAmount = payload.Data.Transaction.TransactionAmount;
                 payout.DisbursedAt = payload.Data.Transaction.Time;
+                adminEventType = AdminNotificationType.PayoutCompleted;
+                adminTitle = "Payout completed";
+                adminBody = $"₦{payout.DisbursedAmount:N0} disbursed to {payout.Member.Name} · {payout.Circle.Name} Cycle {payout.CycleNumber}";
                 break;
             case "payout_failed":
                 payout.Status = PayoutStatus.Failed;
                 payout.FailureReason = "Payout failed per Nomba webhook.";
                 payout.RetryCount++;
+                adminEventType = AdminNotificationType.PayoutFailed;
+                adminTitle = "Payout failed";
+                adminBody = $"Payout to {payout.Member.Name} failed · {payout.Circle.Name} Cycle {payout.CycleNumber} — will retry";
                 break;
             case "payout_refund":
                 payout.Status = PayoutStatus.Failed;
                 payout.FailureReason = "Payout was refunded back to merchant account.";
+                adminEventType = AdminNotificationType.PayoutFailed;
+                adminTitle = "Payout refunded";
+                adminBody = $"Payout to {payout.Member.Name} was refunded · {payout.Circle.Name} Cycle {payout.CycleNumber}";
                 break;
+            default:
+                return new WebhookResult(false, "Unhandled payout event type.");
         }
 
         await db.SaveChangesAsync(ct);
+
+        // Admin-facing: NEW
+        await adminNotifier.NotifyAsync(payout.Circle.AdminId, adminEventType, adminTitle, adminBody,
+            payout.CircleId, payout.Circle.Name, ct);
+
         logger.LogInformation("Payout {PayoutId} updated to {Status} via webhook", payout.Id, payout.Status);
 
         return new WebhookResult(true, $"Payout {payload.EventType} processed.");
@@ -336,6 +372,12 @@ public class NombaWebhookHandler(
             ScheduledAt = DateTime.UtcNow,
         });
 
+        // Admin-facing: NEW — was designed earlier but never actually wired in.
+        await adminNotifier.NotifyAsync(circle.AdminId, AdminNotificationType.PayoutTriggered,
+            "Payout queued",
+            $"{payoutMember.Name} is up for payout · {circle.Name} — Cycle {circle.CurrentCycle}",
+            circle.Id, circle.Name, ct);
+
         logger.LogInformation("Payout queued for member {MemberId} circle {CircleId} cycle {Cycle}", payoutMember.Id, circle.Id, circle.CurrentCycle);
     }
 }
@@ -356,15 +398,10 @@ public static class NombaWebhookEndpoint
                 var rawBody = await reader.ReadToEndAsync();
                 req.Body.Position = 0;
 
-                // TEMPORARY — remove once the payload shape is confirmed against
-                // NombaWebhookPayload.cs. LogWarning (not LogInformation) so it's
-                // easy to spot/filter in Render's log viewer. This logs the FULL
-                // raw payload, so don't leave it in past the verification step.
+                // TEMPORARY — remove once payload shape is fully confirmed against
+                // NombaWebhookPayload.cs. Logs the full raw payload.
                 logger.LogWarning("RAW NOMBA WEBHOOK: {Body}", rawBody);
 
-                // CORRECTED: real header is "nomba-signature" (lowercase, hyphenated),
-                // not "X-Nomba-Signature". ASP.NET header lookup is case-insensitive,
-                // but the NAME itself was wrong, so this always returned empty before.
                 var signature = req.Headers["nomba-signature"].FirstOrDefault() ?? string.Empty;
 
                 if (!nomba.VerifyWebhookSignature(rawBody, signature))
