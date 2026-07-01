@@ -73,18 +73,7 @@ public static class ServiceExtensions
         return services;
     }
 
-    public static IServiceCollection AddNombaClient(this IServiceCollection services, IConfiguration config)
-    {
-        services.AddHttpClient<INombaClient, NombaClient>(http =>
-        {
-            http.BaseAddress = new Uri(config["Nomba:BaseUrl"] ?? "https://api.nomba.com/");
-            http.DefaultRequestHeaders.Add("Authorization", $"Bearer {config["Nomba:ApiKey"]}");
-            http.DefaultRequestHeaders.Add("accountId", config["Nomba:AccountId"]);
-            http.Timeout = TimeSpan.FromSeconds(30);
-        });
-        return services;
-    }
-
+    
     public static IServiceCollection AddAppServices(this IServiceCollection services)
     {
         services.AddScoped<IJwtService, JwtService>();

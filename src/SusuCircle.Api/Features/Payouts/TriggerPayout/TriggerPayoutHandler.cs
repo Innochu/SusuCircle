@@ -57,32 +57,63 @@ public class TriggerPayoutHandler(
 
             var transfer = await nomba.InitiateTransferAsync(new InitiateTransferRequest(
                 AccountNumber: payoutMember.VirtualAccountNumber,
-                BankCode:      "000026", // Nomba MFB code
-                Amount:        payout.ExpectedAmount,
-                Narration:     $"Susu Circle payout – {circle.Name} Cycle {circle.CurrentCycle}",
-                Reference:     transferRef), ct);
+                BankCode: "000026", // Nomba MFB code
+                Amount: payout.ExpectedAmount,
+                Narration: $"Susu Circle payout – {circle.Name} Cycle {circle.CurrentCycle}",
+                Reference: transferRef), ct);
 
-            payout.Status           = PayoutStatus.Completed;
-            payout.DisbursedAmount  = payout.ExpectedAmount;
-            payout.NombaTransferRef = transfer.TransferReference;
-            payout.DisbursedAt      = DateTime.UtcNow;
+            // CORRECTED: store the merchantTxRef WE sent (transferRef), not Nomba's
+            // own transfer id (transfer.TransferReference, which maps from data.id).
+            // The inbound payout_success/payout_failed webhook reports back
+            // data.transaction.merchantTxRef — that's OUR reference, so this is the
+            // only value NombaWebhookHandler.HandlePayoutEventAsync can match against.
+            payout.NombaTransferRef = transferRef;
 
-            await db.SaveChangesAsync(ct);
+            // CORRECTED: a transfer can come back PENDING — the real outcome then
+            // arrives later via the payout_success/payout_failed webhook. Only mark
+            // Completed and advance the cycle when Nomba's synchronous response
+            // itself says success; otherwise leave it Processing and let the
+            // webhook (HandlePayoutEventAsync) finish the job.
+            var isImmediateSuccess = string.Equals(transfer.Status, "SUCCESS", StringComparison.OrdinalIgnoreCase);
 
-            // Notify member
-            await notifications.SendAsync(payoutMember.Id, NotificationType.PayoutSent,
-                "Payout sent! 🎉",
-                $"₦{payout.DisbursedAmount:N0} has been sent to your account for cycle {circle.CurrentCycle} of '{circle.Name}'.", ct);
+            if (isImmediateSuccess)
+            {
+                payout.Status = PayoutStatus.Completed;
+                payout.DisbursedAmount = payout.ExpectedAmount;
+                payout.DisbursedAt = DateTime.UtcNow;
 
-            // Advance circle to next cycle
-            await AdvanceCycleAsync(circle, ct);
+                await db.SaveChangesAsync(ct);
 
-            logger.LogInformation("Payout completed for member {MemberId} cycle {Cycle} — ₦{Amount}",
-                payoutMember.Id, circle.CurrentCycle, payout.DisbursedAmount);
+                await notifications.SendAsync(payoutMember.Id, NotificationType.PayoutSent,
+                    "Payout sent! 🎉",
+                    $"₦{payout.DisbursedAmount:N0} has been sent to your account for cycle {circle.CurrentCycle} of '{circle.Name}'.", ct);
+
+                await AdvanceCycleAsync(circle, ct);
+
+                logger.LogInformation("Payout completed for member {MemberId} cycle {Cycle} — ₦{Amount}",
+                    payoutMember.Id, circle.CurrentCycle, payout.DisbursedAmount);
+            }
+            else
+            {
+                // Stays PayoutStatus.Processing. The cycle is NOT advanced yet —
+                // doing so now would be wrong if the transfer later fails.
+                // TODO: when the payout_success webhook confirms this reference,
+                // AdvanceCycleAsync needs to run at that point too. Right now
+                // NombaWebhookHandler.HandlePayoutEventAsync only updates the
+                // Payout row's status — it doesn't advance the circle's cycle.
+                // That logic should move into a shared method both handlers call,
+                // so a PENDING-then-webhook-confirmed payout still advances the
+                // circle exactly once.
+                await db.SaveChangesAsync(ct);
+
+                logger.LogInformation(
+                    "Payout for member {MemberId} cycle {Cycle} is {Status} — awaiting webhook confirmation (ref {Ref}).",
+                    payoutMember.Id, circle.CurrentCycle, transfer.Status, transferRef);
+            }
         }
         catch (NombaApiException ex)
         {
-            payout.Status        = PayoutStatus.Failed;
+            payout.Status = PayoutStatus.Failed;
             payout.FailureReason = ex.Message;
             payout.RetryCount++;
             await db.SaveChangesAsync(ct);
@@ -107,13 +138,13 @@ public class TriggerPayoutHandler(
 
         var payout = new Payout
         {
-            Id             = Guid.NewGuid(),
-            CircleId       = circle.Id,
-            MemberId       = payoutMember.Id,
-            CycleNumber    = circle.CurrentCycle,
+            Id = Guid.NewGuid(),
+            CircleId = circle.Id,
+            MemberId = payoutMember.Id,
+            CycleNumber = circle.CurrentCycle,
             ExpectedAmount = totalCollected,
-            Status         = PayoutStatus.Pending,
-            ScheduledAt    = DateTime.UtcNow,
+            Status = PayoutStatus.Pending,
+            ScheduledAt = DateTime.UtcNow,
         };
 
         db.Payouts.Add(payout);
@@ -126,9 +157,9 @@ public class TriggerPayoutHandler(
         circle.CurrentCycle++;
         circle.NextContributionDate = circle.Frequency switch
         {
-            ContributionFrequency.Weekly   => circle.NextContributionDate.AddDays(7),
+            ContributionFrequency.Weekly => circle.NextContributionDate.AddDays(7),
             ContributionFrequency.Biweekly => circle.NextContributionDate.AddDays(14),
-            _                             => circle.NextContributionDate.AddMonths(1),
+            _ => circle.NextContributionDate.AddMonths(1),
         };
 
         // Check if all members have received their payout
@@ -150,12 +181,12 @@ public class TriggerPayoutHandler(
                 {
                     db.Contributions.Add(new Contribution
                     {
-                        Id             = Guid.NewGuid(),
-                        MemberId       = member.Id,
-                        CircleId       = circle.Id,
-                        CycleNumber    = circle.CurrentCycle,
+                        Id = Guid.NewGuid(),
+                        MemberId = member.Id,
+                        CircleId = circle.Id,
+                        CycleNumber = circle.CurrentCycle,
                         ExpectedAmount = circle.ContributionAmount,
-                        DueDate        = circle.NextContributionDate,
+                        DueDate = circle.NextContributionDate,
                     });
                 }
             }

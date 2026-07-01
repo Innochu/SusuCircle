@@ -3,6 +3,7 @@ using Microsoft.OpenApi.Models;
 using Serilog;
 using SusuCircle.Api.Common.Extensions;
 using SusuCircle.Api.Common.Middleware;
+using SusuCircle.Api.Common.Nomba;
 using SusuCircle.Api.Common.Services;
 using SusuCircle.Api.Features.Auth.Login;
 using SusuCircle.Api.Features.Auth.RefreshToken;
@@ -38,17 +39,16 @@ builder.Host.UseSerilog((ctx, lc) => lc
     .WriteTo.Console());
 
 // ── Services ─────────────────────────────────────────────────────────────────
-
 builder.Services
     .AddDatabase(builder.Configuration)
     .AddJwtAuth(builder.Configuration)
     .AddMediator()
     .AddValidators()
-    .AddNombaClient(builder.Configuration)
     .AddAppServices()
     .AddBackgroundJobs(builder.Configuration)
     .AddCircleHub()
     .AddAntiforgery()
+    .AddNombaClient(builder.Configuration)
     .AddEndpointsApiExplorer()
     .AddSwaggerGen()
     .AddCors(opt => opt.AddDefaultPolicy(p => p
