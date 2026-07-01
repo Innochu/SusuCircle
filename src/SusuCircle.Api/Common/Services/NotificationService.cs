@@ -1,11 +1,22 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using SusuCircle.Api.Common.Models;
 using SusuCircle.Api.Common.Persistence;
-using System.Net;
-using System.Net.Mail;
 
 namespace SusuCircle.Api.Common.Services;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CHANGED: email now goes through IEmailSender (Resend HTTPS API) instead of
+// raw SmtpClient. The old SMTP host was timing out at the TCP connect stage on
+// Render (blocked outbound port, or the mail host rejecting cloud IPs) —
+// see ResendEmailSender.cs for the replacement.
+//
+// SmtpSettings and the SmtpClient-based SendEmailAsync are REMOVED. If nothing
+// else in the project still references SmtpSettings, you can also delete its
+// "SmtpSettings" section from appsettings.json.
+//
+// Public interface (INotificationService) is UNCHANGED — every caller
+// (AddMemberHandler, NombaWebhookHandler, etc.) needs zero changes.
+// ══════════════════════════════════════════════════════════════════════════════
 
 public interface INotificationService
 {
@@ -16,20 +27,8 @@ public interface INotificationService
     Task SendCircleCreditedEmailAsync(string email, string memberName, string circleName, decimal amountCredited, string status);
 }
 
-public class SmtpSettings
+public class NotificationService(AppDbContext db, IEmailSender emailSender, ILogger<NotificationService> logger) : INotificationService
 {
-    public string Host { get; set; } = string.Empty;
-    public int Port { get; set; } = 587;
-    public string Username { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
-    public string FromAddress { get; set; } = string.Empty;
-    public string FromName { get; set; } = "Susu Circle";
-    public bool EnableSsl { get; set; } = true;
-}
-
-public class NotificationService(AppDbContext db, IOptions<SmtpSettings> smtpOptions, ILogger<NotificationService> logger) : INotificationService
-{
-    private readonly SmtpSettings _smtp = smtpOptions.Value;
     public async Task SendAsync(Guid memberId, NotificationType type, string title, string body, CancellationToken ct = default)
     {
         db.Notifications.Add(new Notification
@@ -72,7 +71,6 @@ public class NotificationService(AppDbContext db, IOptions<SmtpSettings> smtpOpt
         await SendEmailAsync(email, subject, html);
         logger.LogInformation("Admin welcome email sent to {Email}", email);
     }
-
 
     public async Task SendMemberWelcomeEmailAsync(string email, string memberName, string circleName, string virtualAccount, decimal amount)
     {
@@ -142,34 +140,12 @@ public class NotificationService(AppDbContext db, IOptions<SmtpSettings> smtpOpt
         logger.LogInformation("Circle credited email sent to {Email} — ₦{Amount} to {Circle} [{Status}]", email, amountCredited, circleName, status);
     }
 
+    // CHANGED: delegates to IEmailSender (Resend) instead of building a
+    // SmtpClient per call. ResendEmailSender already catches and logs its own
+    // failures internally, so a broken send here never throws up into
+    // AddMemberHandler or any other caller — email is best-effort by design.
     private async Task SendEmailAsync(string toAddress, string subject, string htmlBody)
-    {
-        using var client = new SmtpClient(_smtp.Host, _smtp.Port)
-        {
-            Credentials = new NetworkCredential(_smtp.Username, _smtp.Password),
-            EnableSsl = _smtp.EnableSsl,
-            DeliveryMethod = SmtpDeliveryMethod.Network,
-        };
-
-        using var message = new MailMessage
-        {
-            From = new MailAddress(_smtp.FromAddress, _smtp.FromName),
-            Subject = subject,
-            Body = htmlBody,
-            IsBodyHtml = true,
-        };
-        message.To.Add(toAddress);
-
-        try
-        {
-            await client.SendMailAsync(message);
-        }
-        catch (SmtpException ex)
-        {
-            logger.LogError(ex, "SMTP failure sending to {To} — subject: {Subject}", toAddress, subject);
-            throw; // let the caller decide whether to swallow or surface
-        }
-    }
+        => await emailSender.SendEmailAsync(toAddress, subject, htmlBody);
 
     private static string WrapInLayout(string content) => $"""
         <!DOCTYPE html>

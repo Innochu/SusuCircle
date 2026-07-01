@@ -46,6 +46,7 @@ builder.Services
     .AddValidators()
     .AddAppServices()
     .AddBackgroundJobs(builder.Configuration)
+     .AddResendEmail(builder.Configuration)
     .AddCircleHub()
     .AddAntiforgery()
     .AddNombaClient(builder.Configuration)
@@ -56,8 +57,6 @@ builder.Services
         .AllowAnyHeader()
         .AllowAnyMethod()
         .AllowCredentials()));
-builder.Services.Configure<SmtpSettings>(
-    builder.Configuration.GetSection("SmtpSettings"));
 builder.Services.AddScoped<INotificationService, NotificationService>();
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
