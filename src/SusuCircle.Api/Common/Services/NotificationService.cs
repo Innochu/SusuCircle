@@ -5,17 +5,10 @@ using SusuCircle.Api.Common.Persistence;
 namespace SusuCircle.Api.Common.Services;
 
 // ══════════════════════════════════════════════════════════════════════════════
-// CHANGED: email now goes through IEmailSender (Resend HTTPS API) instead of
-// raw SmtpClient. The old SMTP host was timing out at the TCP connect stage on
-// Render (blocked outbound port, or the mail host rejecting cloud IPs) —
-// see ResendEmailSender.cs for the replacement.
-//
-// SmtpSettings and the SmtpClient-based SendEmailAsync are REMOVED. If nothing
-// else in the project still references SmtpSettings, you can also delete its
-// "SmtpSettings" section from appsettings.json.
-//
-// Public interface (INotificationService) is UNCHANGED — every caller
-// (AddMemberHandler, NombaWebhookHandler, etc.) needs zero changes.
+// CHANGED: SendMemberWelcomeEmailAsync now takes an extra `temporaryPassword`
+// parameter and includes a login-credentials block in the email, mirroring
+// what an admin gets after using /api/auth/register — email + password, ready
+// to log in immediately. Every call site (AddMemberHandler) must pass this.
 // ══════════════════════════════════════════════════════════════════════════════
 
 public interface INotificationService
@@ -23,7 +16,7 @@ public interface INotificationService
     Task SendAsync(Guid memberId, NotificationType type, string title, string body, CancellationToken ct = default);
     Task SendBulkAsync(IEnumerable<Guid> memberIds, NotificationType type, string title, string body, CancellationToken ct = default);
     Task SendAdminWelcomeEmailAsync(string email, string adminName);
-    Task SendMemberWelcomeEmailAsync(string email, string memberName, string circleName, string virtualAccount, decimal amount);
+    Task SendMemberWelcomeEmailAsync(string email, string memberName, string circleName, string virtualAccount, decimal amount, string temporaryPassword);
     Task SendCircleCreditedEmailAsync(string email, string memberName, string circleName, decimal amountCredited, string status);
 }
 
@@ -72,7 +65,9 @@ public class NotificationService(AppDbContext db, IEmailSender emailSender, ILog
         logger.LogInformation("Admin welcome email sent to {Email}", email);
     }
 
-    public async Task SendMemberWelcomeEmailAsync(string email, string memberName, string circleName, string virtualAccount, decimal amount)
+    public async Task SendMemberWelcomeEmailAsync(
+        string email, string memberName, string circleName, string virtualAccount,
+        decimal amount, string temporaryPassword)
     {
         var subject = $"You've been added to {circleName} on Susu Circle";
         var html = WrapInLayout($"""
@@ -83,6 +78,21 @@ public class NotificationService(AppDbContext db, IEmailSender emailSender, ILog
                 <p style="margin:0 0 8px;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Your Unique Virtual Account</p>
                 <p style="margin:0;font-size:24px;font-weight:700;letter-spacing:2px;color:#1a1a2e;">{Encode(virtualAccount)}</p>
                 <p style="margin:8px 0 0;font-size:13px;color:#6b7280;">Use this account number for all your contributions to this circle.</p>
+            </div>
+
+            <div style="background:#fef9f0;border-left:4px solid #d97706;padding:16px 20px;border-radius:4px;margin:24px 0;">
+                <p style="margin:0 0 8px;font-size:13px;color:#92400e;text-transform:uppercase;letter-spacing:.5px;">Your Login Details</p>
+                <table style="width:100%;border-collapse:collapse;">
+                    <tr>
+                        <td style="padding:4px 0;color:#6b7280;font-size:13px;">Email</td>
+                        <td style="padding:4px 0;font-weight:600;text-align:right;font-size:14px;">{Encode(email)}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 0;color:#6b7280;font-size:13px;">Temporary Password</td>
+                        <td style="padding:4px 0;font-weight:700;text-align:right;font-size:16px;letter-spacing:1px;font-family:monospace;">{Encode(temporaryPassword)}</td>
+                    </tr>
+                </table>
+                <p style="margin:12px 0 0;font-size:13px;color:#92400e;">Use these to log in and view your contribution status. We recommend changing your password after first login.</p>
             </div>
 
             <table style="width:100%;border-collapse:collapse;margin-top:8px;">
@@ -140,10 +150,6 @@ public class NotificationService(AppDbContext db, IEmailSender emailSender, ILog
         logger.LogInformation("Circle credited email sent to {Email} — ₦{Amount} to {Circle} [{Status}]", email, amountCredited, circleName, status);
     }
 
-    // CHANGED: delegates to IEmailSender (Resend) instead of building a
-    // SmtpClient per call. ResendEmailSender already catches and logs its own
-    // failures internally, so a broken send here never throws up into
-    // AddMemberHandler or any other caller — email is best-effort by design.
     private async Task SendEmailAsync(string toAddress, string subject, string htmlBody)
         => await emailSender.SendEmailAsync(toAddress, subject, htmlBody);
 

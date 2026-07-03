@@ -121,6 +121,7 @@ SimulateTransferEndpoint.Map(app);
 SimulateWebhookEndpoint.Map(app);
 RunReconciliationSweepEndpoint.Map(app);
 CheckBalanceEndpoint.Map(app);
+GetCircleByMemberIdEndpoint.Map(app);
 // ── Hangfire recurring jobs ───────────────────────────────────────────────────
 
 RecurringJob.AddOrUpdate<DefaultCheckJob>(

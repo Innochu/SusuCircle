@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -9,10 +10,21 @@ using SusuCircle.Api.Common.Services;
 
 namespace SusuCircle.Api.Features.Members.AddMember;
 
+// ══════════════════════════════════════════════════════════════════════════════
+// REQUIRES a new column on Member: PasswordHash (string?).
+// Add to Member model (Common/Models/... wherever Member is defined):
+//     public string? PasswordHash { get; set; }
+// Then migrate:
+//     Add-Migration MemberPasswordHash   (PMC)
+//     dotnet ef migrations add MemberPasswordHash   (CLI)
+//
+// STILL NEEDED SEPARATELY: a member-login endpoint that verifies this hash
+// (mirrors LoginHandler for Admin, but querying Members by Email instead).
+// This file only ISSUES the credential — nothing yet checks it at login time.
+// ══════════════════════════════════════════════════════════════════════════════
+
 // ── Request / Response ────────────────────────────────────────────────────────
 
-// NOTE: no VirtualAccountNumber/VirtualAccountId/BankName here — those come from
-// Nomba now, not from the client. The client only ever sends name/phone/email.
 public record AddMemberCommand(
     Guid CircleId,
     string Name,
@@ -67,6 +79,11 @@ public class AddMemberHandler(
             calculatedPosition = maxCurrentPosition + 1;
         }
 
+        // ── Generate + hash a login password, same as RegisterHandler does for Admins ──
+        // Plaintext is used ONLY to send in the welcome email below — it is never
+        // stored anywhere; only the BCrypt hash is persisted.
+        var temporaryPassword = GenerateTemporaryPassword();
+
         var member = new Member
         {
             Id = Guid.NewGuid(),
@@ -76,13 +93,19 @@ public class AddMemberHandler(
             Email = cmd.Email,
             PayoutPosition = calculatedPosition,
             Status = MemberStatus.Active,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword),
         };
 
+        // TEMPORARY — TEST ONLY. Logs the plaintext password so you can log in
+        // during testing if the welcome email doesn't arrive. This is a real
+        // credential in plaintext in your logs — REMOVE this line before any
+        // real deployment, demo recording, or judging session. LogWarning (not
+        // LogInformation) so it's easy to find and easy to remember to delete.
+        logger.LogWarning(
+            "TEST ONLY — temporary password for {Name} ({Email}): {Password}",
+            cmd.Name, cmd.Email ?? "no email", temporaryPassword);
+
         // ── Provision Nomba virtual account (backend-owned, authoritative) ──
-        // member.Id is the account reference, so this is idempotent per member.
-        // Called BEFORE SaveChangesAsync — if Nomba fails, nothing is persisted
-        // and the whole request fails cleanly (per your "always call Nomba, fail
-        // if it errors" decision — no fallback to a client-supplied VA).
         VirtualAccountResponse va;
         try
         {
@@ -105,7 +128,6 @@ public class AddMemberHandler(
 
         db.Members.Add(member);
 
-        // First-cycle contribution record for this member
         db.Contributions.Add(new Contribution
         {
             Id = Guid.NewGuid(),
@@ -116,13 +138,12 @@ public class AddMemberHandler(
             DueDate = circle.NextContributionDate,
         });
 
-        // Activate circle on first member added
         if (circle.Status == CircleStatus.Setup)
             circle.Status = CircleStatus.Active;
 
         await db.SaveChangesAsync(ct);
 
-        // Welcome email with real VA details
+        // Welcome email — now includes login credentials alongside the VA details.
         if (!string.IsNullOrWhiteSpace(cmd.Email))
         {
             await notifications.SendMemberWelcomeEmailAsync(
@@ -130,10 +151,10 @@ public class AddMemberHandler(
                 cmd.Name,
                 circle.Name,
                 va.AccountNumber,
-                circle.ContributionAmount);
+                circle.ContributionAmount,
+                temporaryPassword);
         }
 
-        // In-app notification timeline — VA is guaranteed present now, no guard needed
         await notifications.SendAsync(member.Id, NotificationType.MemberAdded,
             "Welcome to the circle!",
             $"Your contribution account is {va.AccountNumber} ({va.BankName}). " +
@@ -150,6 +171,31 @@ public class AddMemberHandler(
         m.Id, m.CircleId, m.Name, m.Phone, m.Email,
         m.PayoutPosition, m.VirtualAccountNumber, m.BankName,
         m.Status, m.CreditScore, m.CreditTier);
+
+    // Generates an 10-character password meeting the same complexity rules as
+    // RegisterValidator (uppercase + digit present) using a cryptographically
+    // random source — not Random/Guid, since this is a real credential.
+    private static string GenerateTemporaryPassword()
+    {
+        const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";      // no I/O — avoid confusion with 1/0
+        const string lower = "abcdefghijkmnpqrstuvwxyz";
+        const string digits = "23456789";                      // no 0/1 — avoid confusion with O/l
+        const string all = upper + lower + digits;
+
+        Span<byte> buffer = stackalloc byte[10];
+        RandomNumberGenerator.Fill(buffer);
+
+        var chars = new char[10];
+        for (int i = 0; i < chars.Length; i++)
+            chars[i] = all[buffer[i] % all.Length];
+
+        // Guarantee at least one uppercase and one digit, deterministically at
+        // fixed positions, without weakening the rest of the random spread.
+        chars[0] = upper[buffer[0] % upper.Length];
+        chars[1] = digits[buffer[1] % digits.Length];
+
+        return new string(chars);
+    }
 }
 
 // ── Endpoint ──────────────────────────────────────────────────────────────────

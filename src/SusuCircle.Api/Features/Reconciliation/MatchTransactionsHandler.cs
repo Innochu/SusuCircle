@@ -9,12 +9,6 @@ using SusuCircle.Api.Infrastructure;
 
 namespace SusuCircle.Api.Features.Reconciliation.Match;
 
-// ══════════════════════════════════════════════════════════════════════════════
-// REQUIRES a new entity `UnmatchedTransaction` and DbSet. See note at the bottom.
-// These are inbound transfers the webhook could NOT auto-reconcile (unknown VA,
-// no open contribution, etc.) and that an admin resolves manually (image 3).
-// ══════════════════════════════════════════════════════════════════════════════
-
 // ── Get unmatched transactions + members side panel ───────────────────────────
 
 public record GetMatchViewQuery(Guid AdminId, Guid CircleId) : IRequest<MatchViewResponse>;
@@ -39,7 +33,7 @@ public record MatchMemberDto(
     Guid Id,
     string Name,
     string? VirtualAccountNumber,
-    string Status);   // current-cycle status: Paid | Partial | Unpaid | Overdue
+    string Status);
 
 public class GetMatchViewHandler(AppDbContext db) : IRequestHandler<GetMatchViewQuery, MatchViewResponse>
 {
@@ -91,11 +85,19 @@ public class GetMatchViewHandler(AppDbContext db) : IRequestHandler<GetMatchView
 
 // ── Manually match a transaction to a member ──────────────────────────────────
 
-// Applies the same reconciliation math as the webhook, then marks the txn resolved.
 public record MatchTransactionCommand(Guid AdminId, Guid TransactionId, Guid MemberId)
     : IRequest<MatchResult>;
 
-public record MatchResult(bool Matched, string Message, string ResultingStatus);
+// CHANGED: added receivedAmount, expectedAmount, lastPaymentDate so the
+// frontend gets the same field names it already reads off the reconciliation
+// board, without a second round-trip to refresh that data after a match.
+public record MatchResult(
+    bool Matched,
+    string Message,
+    string ResultingStatus,
+    decimal ReceivedAmount,
+    decimal ExpectedAmount,
+    DateTime? LastPaymentDate);
 
 public class MatchTransactionHandler(
     AppDbContext db,
@@ -114,7 +116,6 @@ public class MatchTransactionHandler(
             .FirstOrDefaultAsync(m => m.Id == cmd.MemberId, ct)
             ?? throw new NotFoundException(nameof(Member), cmd.MemberId);
 
-        // Ownership check
         if (member.Circle.AdminId != cmd.AdminId)
             throw new NotFoundException(nameof(Member), cmd.MemberId);
 
@@ -127,7 +128,17 @@ public class MatchTransactionHandler(
         {
             txn.IsResolved = true;
             await db.SaveChangesAsync(ct);
-            return new MatchResult(false, "Transaction reference already applied.", "Unchanged");
+
+            // Best-effort: surface the existing contribution's figures even on
+            // the "already applied" path, so the response shape stays consistent.
+            var existing = await db.Contributions
+                .FirstOrDefaultAsync(c => c.NombaTransactionRef == txn.TransactionReference, ct);
+
+            return new MatchResult(
+                false, "Transaction reference already applied.", "Unchanged",
+                existing?.PaidAmount ?? 0m,
+                existing?.ExpectedAmount ?? 0m,
+                existing?.PaidAt);
         }
 
         var contribution = await db.Contributions
@@ -181,7 +192,11 @@ public class MatchTransactionHandler(
                 balance,
             }, ct);
 
-        return new MatchResult(true, "Transaction matched successfully.", status);
+        return new MatchResult(
+            true, "Transaction matched successfully.", status,
+            contribution.PaidAmount,
+            contribution.ExpectedAmount,
+            contribution.PaidAt);
     }
 }
 
