@@ -186,6 +186,7 @@ public class RunReconciliationSweepHandler(
         [property: JsonPropertyName("accountNumber")] string? AccountNumber,
         [property: JsonPropertyName("aliasAccountNumber")] string? AliasAccountNumber)
     {
+        [JsonIgnore]
         public decimal Amount => decimal.TryParse(AmountRaw, out var a) ? a : 0m;
     }
 }
