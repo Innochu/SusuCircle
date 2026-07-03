@@ -8,7 +8,7 @@ using SusuCircle.Api.Common.Models;
 using SusuCircle.Api.Common.Nomba;
 using SusuCircle.Api.Common.Persistence;
 
-namespace SusuCircle.Api.Features.Reconciliation.Sweep;
+namespace SusuCircle.Api.Features.Reconciliation.sweep;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // RECONCILIATION SWEEP — the "Transactions API" key API for this challenge,
