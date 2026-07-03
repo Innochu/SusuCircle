@@ -29,19 +29,22 @@ public record ReconciliationBoardResponse(
     int OutstandingMembers,
     List<ReconciliationRowDto> Rows);
 
+// RENAMED to match frontend contract:
+//   Received      → ReceivedAmount   (serializes as receivedAmount)
+//   Expected      → ExpectedAmount   (serializes as expectedAmount)
+//   LastPaymentAt → LastPaymentDate  (serializes as lastPaymentDate)
 public record ReconciliationRowDto(
     Guid MemberId,
     string MemberName,
     int PayoutPosition,
     string? VirtualAccountNumber,
-    decimal Received,
-    decimal Expected,
+    decimal ReceivedAmount,
+    decimal ExpectedAmount,
     decimal Balance,
-    decimal CreditApplied,        // NEW — makes overpayment carry-forward visible on screen,
-                                  // instead of only being implicit in the balance math.
+    decimal CreditApplied,
     string Status,
     int? DaysOverdue,
-    DateTime? LastPaymentAt,
+    DateTime? LastPaymentDate,
     DateTime? DueDate);
 
 // ── Handler ───────────────────────────────────────────────────────────────────
