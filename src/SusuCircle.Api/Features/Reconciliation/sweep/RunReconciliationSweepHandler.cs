@@ -177,14 +177,17 @@ public class RunReconciliationSweepHandler(
     private record RawTransaction(
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("status")] string? Status,
-        [property: JsonPropertyName("amount")] decimal Amount,
+        [property: JsonPropertyName("amount")] string? AmountRaw,   // Nomba sends this as a STRING, e.g. "100.00"
         [property: JsonPropertyName("type")] string? Type,
         [property: JsonPropertyName("merchantTxRef")] string? MerchantTxRef,
         [property: JsonPropertyName("timeCreated")] DateTime? TimeCreated,
         [property: JsonPropertyName("customerBillerId")] string? CustomerBillerId,
         // Speculative — not confirmed present on this endpoint's response:
         [property: JsonPropertyName("accountNumber")] string? AccountNumber,
-        [property: JsonPropertyName("aliasAccountNumber")] string? AliasAccountNumber);
+        [property: JsonPropertyName("aliasAccountNumber")] string? AliasAccountNumber)
+    {
+        public decimal Amount => decimal.TryParse(AmountRaw, out var a) ? a : 0m;
+    }
 }
 
 // ── Endpoint ──────────────────────────────────────────────────────────────────
