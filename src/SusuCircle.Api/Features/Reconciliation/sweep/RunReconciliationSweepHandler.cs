@@ -8,7 +8,7 @@ using SusuCircle.Api.Common.Models;
 using SusuCircle.Api.Common.Nomba;
 using SusuCircle.Api.Common.Persistence;
 
-namespace SusuCircle.Api.Features.Reconciliation.sweep;
+namespace SusuCircle.Api.Features.Reconciliation.Sweep;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // RECONCILIATION SWEEP — the "Transactions API" key API for this challenge,
@@ -71,7 +71,7 @@ public class RunReconciliationSweepHandler(
 
         // ── Call Nomba's Transactions API directly ──
         var token = await tokenProvider.GetAccessTokenAsync(ct);
-        var url = $"/v1/transactions/accounts?startDate={since:yyyy-MM-ddTHH:mm:ss}&endDate={DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss}&limit=100";
+        var url = $"{opt.BaseUrl.TrimEnd('/')}/v1/transactions/accounts?startDate={since:yyyy-MM-ddTHH:mm:ss}&endDate={DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss}&limit=100";
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Add("accountId", opt.ParentAccountId);
