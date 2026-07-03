@@ -55,6 +55,7 @@ builder.Services
     .AddAntiforgery()
     .AddNombaClient(builder.Configuration)
     .AddEndpointsApiExplorer()
+    .AddScoped<AutoReconciliationJob>()
     .AddSwaggerGen()
     .AddCors(opt => opt.AddDefaultPolicy(p => p
         .WithOrigins(builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? ["http://localhost:5173"])
@@ -137,6 +138,10 @@ RecurringJob.AddOrUpdate<PayoutRetryJob>(
     job => job.RunAsync(),
     "0 */4 * * *"); // Every 4 hours
 
+RecurringJob.AddOrUpdate<AutoReconciliationJob>(
+    "auto-reconciliation-sweep",
+    job => job.RunAsync(default),
+    "*/1 * * * *"); // every 1 minute   
 // ── Run ───────────────────────────────────────────────────────────────────────
 
 app.Run();

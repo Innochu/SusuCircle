@@ -105,16 +105,10 @@ public class RunReconciliationSweepHandler(
 
         foreach (var txn in transactions)
         {
-            // Only interested in inbound credits — filter out withdrawals, POS,
-            // airtime, etc. "type" values here are unconfirmed for this endpoint;
-            // this list is a best-effort filter, refine once real data is seen.
-            if (txn.Type is not null &&
-                !txn.Type.Contains("credit", StringComparison.OrdinalIgnoreCase) &&
-                !txn.Type.Contains("transfer", StringComparison.OrdinalIgnoreCase) &&
-                !txn.Type.Contains("virtual", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
+            // CONFIRMED: entryType == "CREDIT" && type == "vact_transfer" precisely
+            // identifies genuine inbound virtual-account funding — replaces the
+            // earlier guessed Contains("credit"/"transfer"/"virtual") heuristic.
+            if (!LooksLikeInboundCredit(txn)) continue;
 
             var reference = txn.MerchantTxRef ?? txn.Id;
             if (string.IsNullOrWhiteSpace(reference)) continue;
@@ -142,8 +136,8 @@ public class RunReconciliationSweepHandler(
                 Id = Guid.NewGuid(),
                 CircleId = circle.Id,
                 Amount = txn.Amount,
-                SenderName = null,
-                SenderAccountNumber = null,
+                SenderName = txn.SenderName,
+                SenderAccountNumber = txn.AccountNumber, // confirmed: this IS the sender's own account
                 VirtualAccountNumber = matchedVa,
                 TransactionReference = reference,
                 ReceivedAt = txn.TimeCreated ?? DateTime.UtcNow,
@@ -165,17 +159,22 @@ public class RunReconciliationSweepHandler(
     }
 
     // Scans known fields for a match against any of this circle's member VAs.
-    // Checks multiple plausible field names since the exact one isn't confirmed.
+    // CONFIRMED against a real transaction: the receiving VA is recipientAccountNumber,
+    // and virtualAccountReference is literally the Member.Id used as accountRef at
+    // VA-creation time — the most reliable match of all, immune to formatting issues.
     private static string? TryFindKnownVirtualAccount(RawTransaction txn, IEnumerable<string> knownVas)
     {
-        var candidates = new[] { txn.AccountNumber, txn.AliasAccountNumber, txn.CustomerBillerId };
-        foreach (var va in knownVas)
+        if (!string.IsNullOrWhiteSpace(txn.RecipientAccountNumber) &&
+            knownVas.Contains(txn.RecipientAccountNumber))
         {
-            if (candidates.Any(c => c is not null && c.Contains(va)))
-                return va;
+            return txn.RecipientAccountNumber;
         }
         return null;
     }
+
+    private static bool LooksLikeInboundCredit(RawTransaction txn) =>
+        string.Equals(txn.EntryType, "CREDIT", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(txn.Type, "vact_transfer", StringComparison.OrdinalIgnoreCase);
 
     // ── Response shapes (confirmed fields per docs; a few speculative extras
     //    included defensively since VA-credit-type transactions weren't shown
@@ -192,9 +191,14 @@ public class RunReconciliationSweepHandler(
         [property: JsonPropertyName("merchantTxRef")] string? MerchantTxRef,
         [property: JsonPropertyName("timeCreated")] DateTime? TimeCreated,
         [property: JsonPropertyName("customerBillerId")] string? CustomerBillerId,
-        // Speculative — not confirmed present on this endpoint's response:
-        [property: JsonPropertyName("accountNumber")] string? AccountNumber,
-        [property: JsonPropertyName("aliasAccountNumber")] string? AliasAccountNumber)
+        [property: JsonPropertyName("accountNumber")] string? AccountNumber,       // SENDER's own account — NOT the receiver
+        [property: JsonPropertyName("aliasAccountNumber")] string? AliasAccountNumber,
+        // ── CONFIRMED real fields for VA-credit transactions ──
+        [property: JsonPropertyName("recipientAccountNumber")] string? RecipientAccountNumber, // the VA that RECEIVED the money
+        [property: JsonPropertyName("virtualAccountReference")] string? VirtualAccountReference, // == Member.Id (the accountRef used at VA creation)
+        [property: JsonPropertyName("entryType")] string? EntryType,               // "CREDIT" | "DEBIT"
+        [property: JsonPropertyName("recipientAccountType")] string? RecipientAccountType, // "VIRTUAL"
+        [property: JsonPropertyName("senderName")] string? SenderName)
     {
         [JsonIgnore]
         public decimal Amount => decimal.TryParse(AmountRaw, out var a) ? a : 0m;
