@@ -80,6 +80,16 @@ public class RunReconciliationSweepHandler(
         using var resp = await http.SendAsync(req, ct);
         var raw = await resp.Content.ReadAsStringAsync(ct);
 
+        // TEMPORARY — logs the full raw Transactions API response so we can find
+        // the real field name that carries the receiving VA number for a VA-credit
+        // transaction (the three guessed field names in TryFindKnownVirtualAccount
+        // didn't match anything real). Search Render logs for a known reference
+        // (e.g. "39b1fb22") to see its actual surrounding JSON fields, then update
+        // TryFindKnownVirtualAccount accordingly. REMOVE once confirmed — this
+        // logs full transaction data including references across the whole
+        // shared hackathon account, not just your own.
+        logger.LogWarning("RAW NOMBA TRANSACTIONS RESPONSE: {Body}", raw);
+
         if (!resp.IsSuccessStatusCode)
         {
             logger.LogError("Reconciliation sweep: Nomba Transactions API failed {Status}: {Body}", resp.StatusCode, raw);
