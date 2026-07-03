@@ -14,6 +14,7 @@ using SusuCircle.Api.Features.Circles.ListCircles;
 using SusuCircle.Api.Features.Circles.UpdateCircleStatus;
 using SusuCircle.Api.Features.Contributions.GetContributionBoard;
 using SusuCircle.Api.Features.Contributions.GetContributions;
+using SusuCircle.Api.Features.Dev.CheckBalance;
 using SusuCircle.Api.Features.Dev.SimulateTransfer;
 using SusuCircle.Api.Features.Dev.SimulateWebhook;
 using SusuCircle.Api.Features.Members.AddMember;
@@ -26,6 +27,7 @@ using SusuCircle.Api.Features.Payouts.GetPayoutBoard;
 using SusuCircle.Api.Features.Payouts.GetPayouts;
 using SusuCircle.Api.Features.Payouts.TriggerPayout;
 using SusuCircle.Api.Features.Reconciliation.Match;
+using SusuCircle.Api.Features.Reconciliation.sweep;
 using SusuCircle.Api.Features.Webhooks.NombaWebhook;
 using SusuCircle.Api.Infrastructure;
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -60,6 +62,7 @@ builder.Services
         .AllowAnyMethod()
         .AllowCredentials()));
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IAdminNotifier, AdminNotifier>();
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
 var app = builder.Build();
@@ -115,6 +118,8 @@ MatchTransactionEndpoints.Map(app);
 GetPayoutBoardEndpoint.Map(app);
 SimulateTransferEndpoint.Map(app);
 SimulateWebhookEndpoint.Map(app);
+RunReconciliationSweepEndpoint.Map(app);
+CheckBalanceEndpoint.Map(app);
 // ── Hangfire recurring jobs ───────────────────────────────────────────────────
 
 RecurringJob.AddOrUpdate<DefaultCheckJob>(

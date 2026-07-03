@@ -8,8 +8,6 @@ namespace SusuCircle.Api.Features.Reconciliation.GetBoard;
 
 // ── Request ───────────────────────────────────────────────────────────────────
 
-// Powers the main reconciliation screen (images 1 & 2): the stat cards, collection
-// progress bar, the All/Paid/Partial/Overdue/Unpaid tabs, and the member table.
 public record GetReconciliationBoardQuery(Guid AdminId, Guid CircleId, int? Cycle = null)
     : IRequest<ReconciliationBoardResponse>;
 
@@ -19,17 +17,16 @@ public record ReconciliationBoardResponse(
     string Plan,
     int Cycle,
     decimal ContributionAmount,
-    // Stat cards
     decimal Collected,
     decimal Expected,
-    int CollectionRate,          // percentage 0-100
+    int CollectionRate,
     int PaidCount,
     int PartialCount,
     int OverdueCount,
     int UnpaidCount,
     int TotalMembers,
-    int AttentionCount,          // partial + overdue
-    int OutstandingMembers,      // members who still owe anything
+    int AttentionCount,
+    int OutstandingMembers,
     List<ReconciliationRowDto> Rows);
 
 public record ReconciliationRowDto(
@@ -40,8 +37,10 @@ public record ReconciliationRowDto(
     decimal Received,
     decimal Expected,
     decimal Balance,
-    string Status,               // Paid | Partial | Unpaid | Overdue
-    int? DaysOverdue,            // set when overdue
+    decimal CreditApplied,        // NEW — makes overpayment carry-forward visible on screen,
+                                  // instead of only being implicit in the balance math.
+    string Status,
+    int? DaysOverdue,
     DateTime? LastPaymentAt,
     DateTime? DueDate);
 
@@ -90,7 +89,6 @@ public class GetReconciliationBoardHandler(AppDbContext db)
             var dueDate = contrib?.DueDate;
             int? daysOverdue = null;
 
-            // Derive display status. Overdue = balance remaining AND past due date.
             string status;
             var rawStatus = contrib?.Status ?? ContributionStatus.Unpaid;
 
@@ -107,7 +105,6 @@ public class GetReconciliationBoardHandler(AppDbContext db)
                 status = "Unpaid";
             }
 
-            // Layer overdue on top of Partial/Unpaid when past due date
             if (status != "Paid" && dueDate.HasValue && now.Date > dueDate.Value.Date)
             {
                 daysOverdue = (now.Date - dueDate.Value.Date).Days;
@@ -122,6 +119,7 @@ public class GetReconciliationBoardHandler(AppDbContext db)
                 paid,
                 expected,
                 balance,
+                credit,
                 status,
                 daysOverdue,
                 contrib?.PaidAt,
