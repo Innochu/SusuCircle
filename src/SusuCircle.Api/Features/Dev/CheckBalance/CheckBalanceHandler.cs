@@ -40,7 +40,7 @@ public class CheckBalanceHandler(
         var opt = nombaOptions.Value;
         var token = await tokenProvider.GetAccessTokenAsync(ct);
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/v1/accounts/balance");
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"{opt.BaseUrl.TrimEnd('/')}/v1/accounts/balance");
         req.Headers.Add("accountId", opt.ParentAccountId);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
