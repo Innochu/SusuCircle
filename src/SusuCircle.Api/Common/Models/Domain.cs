@@ -65,6 +65,8 @@ public class Member
     public string? Email { get; set; }
     public string PasswordHash { get; set; } = string.Empty;
     public int PayoutPosition { get; set; }
+    public string? RefreshToken { get; set; }
+    public DateTime? RefreshTokenExpiry { get; set; }
     public string? VirtualAccountId { get; set; }
     public string? VirtualAccountNumber { get; set; }
     public string? BankName { get; set; }
