@@ -19,7 +19,11 @@ using SusuCircle.Api.Features.Dev.SimulateTransfer;
 using SusuCircle.Api.Features.Dev.SimulateWebhook;
 using SusuCircle.Api.Features.Members.AddMember;
 using SusuCircle.Api.Features.Members.GetMember;
+using SusuCircle.Api.Features.Members.GetMemberContributions;
+using SusuCircle.Api.Features.Members.GetMemberHome;
+using SusuCircle.Api.Features.Members.GetMemberNotifications;
 using SusuCircle.Api.Features.Members.GetMemberPassport;
+using SusuCircle.Api.Features.Members.GetMemberPayoutView;
 using SusuCircle.Api.Features.Members.ListMembers;
 using SusuCircle.Api.Features.Notifications;
 using SusuCircle.Api.Features.Notifications.GetNotifications;
@@ -122,27 +126,45 @@ SimulateWebhookEndpoint.Map(app);
 RunReconciliationSweepEndpoint.Map(app);
 CheckBalanceEndpoint.Map(app);
 GetCircleByMemberIdEndpoint.Map(app);
+GetMemberContributionsEndpoint.Map(app);   // now /api/members/{memberId}/contributions/summary — no longer collides
+GetMemberHomeEndpoint.Map(app);
+GetMemberPayoutViewEndpoint.Map(app);
+MemberNotificationEndpoints.Map(app);
+
 // ── Hangfire recurring jobs ───────────────────────────────────────────────────
+// Wrapped in try/catch: a distributed-lock timeout here (e.g. a redeploy landing
+// mid-execution of a frequent job) must never crash app startup. Hangfire persists
+// recurring job definitions in Postgres, so if registration fails on THIS boot,
+// the job almost certainly already exists from a prior successful boot and keeps
+// running on its existing schedule regardless.
+try
+{
+    RecurringJob.AddOrUpdate<DefaultCheckJob>(
+        "default-check",
+        job => job.RunAsync(),
+        Cron.Daily);
 
-RecurringJob.AddOrUpdate<DefaultCheckJob>(
-    "default-check",
-    job => job.RunAsync(),
-    Cron.Daily);
+    RecurringJob.AddOrUpdate<PaymentReminderJob>(
+        "payment-reminders",
+        job => job.RunAsync(),
+        Cron.Daily);
 
-RecurringJob.AddOrUpdate<PaymentReminderJob>(
-    "payment-reminders",
-    job => job.RunAsync(),
-    Cron.Daily);
+    RecurringJob.AddOrUpdate<PayoutRetryJob>(
+        "payout-retry",
+        job => job.RunAsync(),
+        "0 */4 * * *"); // Every 4 hours
 
-RecurringJob.AddOrUpdate<PayoutRetryJob>(
-    "payout-retry",
-    job => job.RunAsync(),
-    "0 */4 * * *"); // Every 4 hours
+    RecurringJob.AddOrUpdate<AutoReconciliationJob>(
+        "auto-reconciliation-sweep",
+        job => job.RunAsync(default),
+        "*/3 * * * *"); // every 3 minutes — was every 1 minute, too aggressive
+}
+catch (Exception ex)
+{
+    Log.Warning(ex, "One or more recurring job registrations failed this boot — " +
+        "jobs persist from prior successful registration and continue running regardless.");
+}
 
-RecurringJob.AddOrUpdate<AutoReconciliationJob>(
-    "auto-reconciliation-sweep",
-    job => job.RunAsync(default),
-    "*/1 * * * *"); // every 1 minute   
 // ── Run ───────────────────────────────────────────────────────────────────────
 
 app.Run();
