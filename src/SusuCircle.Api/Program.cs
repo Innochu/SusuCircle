@@ -5,7 +5,9 @@ using SusuCircle.Api.Common.Extensions;
 using SusuCircle.Api.Common.Middleware;
 using SusuCircle.Api.Common.Nomba;
 using SusuCircle.Api.Common.Services;
+using SusuCircle.Api.Features.Auth.ForgotPassword;
 using SusuCircle.Api.Features.Auth.Login;
+using SusuCircle.Api.Features.Auth.Logout;
 using SusuCircle.Api.Features.Auth.RefreshToken;
 using SusuCircle.Api.Features.Auth.Register;
 using SusuCircle.Api.Features.Circles.CreateCircle;
@@ -131,6 +133,8 @@ GetMemberContributionsEndpoint.Map(app);   // now /api/members/{memberId}/contri
 GetMemberHomeEndpoint.Map(app);
 GetMemberPayoutViewEndpoint.Map(app);
 MemberNotificationEndpoints.Map(app);
+ResetPasswordEndpoint.Map(app);
+LogoutEndpoint.Map(app);
 
 // ── Hangfire recurring jobs ───────────────────────────────────────────────────
 // Wrapped in try/catch: a distributed-lock timeout here (e.g. a redeploy landing
