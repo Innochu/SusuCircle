@@ -59,6 +59,7 @@ builder.Services
     .AddAntiforgery()
     .AddNombaClient(builder.Configuration)
     .AddEndpointsApiExplorer()
+    .AddBrevoEmail(builder.Configuration)
     .AddScoped<AutoReconciliationJob>()
     .AddSwaggerGen()
     .AddCors(opt => opt.AddDefaultPolicy(p => p

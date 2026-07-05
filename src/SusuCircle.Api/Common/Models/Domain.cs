@@ -29,6 +29,8 @@ public class Admin
     public string PasswordHash { get; set; } = string.Empty;
     public string? RefreshToken { get; set; }
     public DateTime? RefreshTokenExpiry { get; set; }
+    public DateTime? ResetCodeExpiry { get; set; }
+    public string ResetCode { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public ICollection<Circle> Circles { get; set; } = new List<Circle>();
 }
@@ -66,6 +68,8 @@ public class Member
     public string PasswordHash { get; set; } = string.Empty;
     public int PayoutPosition { get; set; }
     public string? RefreshToken { get; set; }
+    public DateTime? ResetCodeExpiry { get; set; }
+    public string ResetCode { get; set; } = string.Empty;
     public DateTime? RefreshTokenExpiry { get; set; }
     public string? VirtualAccountId { get; set; }
     public string? VirtualAccountNumber { get; set; }
