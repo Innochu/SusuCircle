@@ -135,6 +135,7 @@ GetMemberPayoutViewEndpoint.Map(app);
 MemberNotificationEndpoints.Map(app);
 ResetPasswordEndpoint.Map(app);
 LogoutEndpoint.Map(app);
+ForgotPasswordEndpoint.Map(app);
 
 // ── Hangfire recurring jobs ───────────────────────────────────────────────────
 // Wrapped in try/catch: a distributed-lock timeout here (e.g. a redeploy landing
