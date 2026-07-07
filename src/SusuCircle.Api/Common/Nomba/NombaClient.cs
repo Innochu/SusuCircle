@@ -36,6 +36,7 @@ public record InitiateTransferRequest(
     string Narration,
     string Reference);
 
+public record BankLookupResult(string AccountNumber, string AccountName);
 public record TransferResponse(
     string TransferReference,
     string Status);
@@ -47,6 +48,7 @@ public interface INombaClient
     Task<VirtualAccountResponse> CreateVirtualAccountAsync(CreateVirtualAccountRequest request, CancellationToken ct = default);
     Task<TransferResponse> InitiateTransferAsync(InitiateTransferRequest request, CancellationToken ct = default);
     bool VerifyWebhookSignature(string payload, string signature);
+    Task<BankLookupResult> LookupBankAccountAsync(string accountNumber, string bankCode, CancellationToken ct = default);
 }
 
 public class NombaClient(
@@ -144,14 +146,38 @@ public class NombaClient(
             || FixedTimeEquals(provided, expectedB64);
     }
 
+    // ── Bank account lookup (public — implements INombaClient) ──────────────────
+    // ADDED: this was declared on the interface but never implemented in the
+    // class body — that's a compile error on its own (a class must implement
+    // every interface member). Used directly by member self-service
+    // payout-account setup (SetPayoutAccountHandler) — THROWS on failure,
+    // because for that use case a failed lookup means "reject this account
+    // number, don't save it," never "silently proceed with a fake name."
+    public async Task<BankLookupResult> LookupBankAccountAsync(
+        string accountNumber, string bankCode, CancellationToken ct = default)
+    {
+        var body = new { accountNumber, bankCode };
+        var data = await SendAsync<LookupData>(HttpMethod.Post, "/v1/transfers/bank/lookup", body, ct);
+
+        if (string.IsNullOrWhiteSpace(data.AccountName))
+            throw new NombaApiException("Could not resolve an account name for that account number/bank.");
+
+        return new BankLookupResult(data.AccountNumber ?? accountNumber, data.AccountName);
+    }
+
     // ── Bank account lookup (best-effort, used before transfers) ────────────────
+    // CHANGED: now reuses the public LookupBankAccountAsync above instead of
+    // duplicating the same HTTP call — this one stays deliberately tolerant of
+    // failure (falls back to a placeholder name) since a payout shouldn't be
+    // blocked just because the pre-transfer name-verification call itself had
+    // a hiccup; that's a different risk tolerance than the self-service setup
+    // flow, which should hard-fail on an unresolvable account.
     private async Task<string> TryLookupAccountNameAsync(string accountNumber, string bankCode, CancellationToken ct)
     {
         try
         {
-            var body = new { accountNumber, bankCode };
-            var data = await SendAsync<LookupData>(HttpMethod.Post, "/v1/transfers/bank/lookup", body, ct);
-            return data.AccountName ?? "Susu Circle Member";
+            var result = await LookupBankAccountAsync(accountNumber, bankCode, ct);
+            return result.AccountName;
         }
         catch (NombaApiException ex)
         {

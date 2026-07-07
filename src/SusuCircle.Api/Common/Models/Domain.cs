@@ -76,6 +76,10 @@ public class Member
     public string? BankName { get; set; }
     public MemberStatus Status { get; set; } = MemberStatus.Active;
     public int CreditScore { get; set; } = 50;
+    public string? PayoutBankAccountNumber { get; set; }
+    public string? PayoutBankCode { get; set; }
+    public string? PayoutBankName { get; set; }
+    public string? PayoutBankLabel { get; set; }
     public string CreditTier { get; set; } = "Fair";
     public int ConsecutiveOnTimeStreak { get; set; } = 0;
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;

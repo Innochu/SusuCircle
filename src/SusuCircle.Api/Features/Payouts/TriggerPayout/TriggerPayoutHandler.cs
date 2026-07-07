@@ -44,8 +44,24 @@ public class TriggerPayoutHandler(
 
         var payoutMember = circle.Members.First(m => m.Id == payout.MemberId);
 
-        if (string.IsNullOrEmpty(payoutMember.VirtualAccountNumber))
-            throw new ConflictException("Payout member has no virtual account.");
+        // CORRECTED: pay out to the member's REAL personal bank account, not
+        // their contribution VirtualAccountNumber. Per Nomba's own docs, funds
+        // sent to any Nomba virtual account are automatically routed back into
+        // the parent wallet balance — so a "payout" to a member's own VA would
+        // never actually leave your merchant account. It would just silently
+        // re-enter the pool it came from while the app reports success.
+        //
+        // member.PayoutBankAccountNumber / PayoutBankCode come from the
+        // member's own self-service setup (SetPayoutAccountHandler) — a
+        // verified real bank account, resolved via Nomba's lookup at setup
+        // time, completely separate from their contribution VA.
+        if (string.IsNullOrEmpty(payoutMember.PayoutBankAccountNumber) ||
+            string.IsNullOrEmpty(payoutMember.PayoutBankCode))
+        {
+            throw new ConflictException(
+                $"{payoutMember.Name} has not set up a payout bank account yet. " +
+                "They must add one from the member portal before their payout can be sent.");
+        }
 
         // Update status to processing
         payout.Status = PayoutStatus.Processing;
@@ -56,8 +72,8 @@ public class TriggerPayoutHandler(
             var transferRef = $"PAYOUT-{circle.Id}-CYC{circle.CurrentCycle}-{Guid.NewGuid():N}"[..40];
 
             var transfer = await nomba.InitiateTransferAsync(new InitiateTransferRequest(
-                AccountNumber: payoutMember.VirtualAccountNumber,
-                BankCode: "000026", // Nomba MFB code
+                AccountNumber: payoutMember.PayoutBankAccountNumber,   // CHANGED — real bank account
+                BankCode: payoutMember.PayoutBankCode,                 // CHANGED — real bank code
                 Amount: payout.ExpectedAmount,
                 Narration: $"Susu Circle payout – {circle.Name} Cycle {circle.CurrentCycle}",
                 Reference: transferRef), ct);
@@ -86,12 +102,14 @@ public class TriggerPayoutHandler(
 
                 await notifications.SendAsync(payoutMember.Id, NotificationType.PayoutSent,
                     "Payout sent! 🎉",
-                    $"₦{payout.DisbursedAmount:N0} has been sent to your account for cycle {circle.CurrentCycle} of '{circle.Name}'.", ct);
+                    $"₦{payout.DisbursedAmount:N0} has been sent to your {payoutMember.PayoutBankLabel ?? "bank"} account " +
+                    $"for cycle {circle.CurrentCycle} of '{circle.Name}'.", ct);
 
                 await AdvanceCycleAsync(circle, ct);
 
-                logger.LogInformation("Payout completed for member {MemberId} cycle {Cycle} — ₦{Amount}",
-                    payoutMember.Id, circle.CurrentCycle, payout.DisbursedAmount);
+                logger.LogInformation("Payout completed for member {MemberId} cycle {Cycle} — ₦{Amount} to {Bank} ...{Last4}",
+                    payoutMember.Id, circle.CurrentCycle, payout.DisbursedAmount,
+                    payoutMember.PayoutBankLabel, payoutMember.PayoutBankAccountNumber[^4..]);
             }
             else
             {

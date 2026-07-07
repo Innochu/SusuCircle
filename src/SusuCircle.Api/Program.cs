@@ -27,6 +27,7 @@ using SusuCircle.Api.Features.Members.GetMemberNotifications;
 using SusuCircle.Api.Features.Members.GetMemberPassport;
 using SusuCircle.Api.Features.Members.GetMemberPayoutView;
 using SusuCircle.Api.Features.Members.ListMembers;
+using SusuCircle.Api.Features.Members.SetPayoutAccount;
 using SusuCircle.Api.Features.Notifications;
 using SusuCircle.Api.Features.Notifications.GetNotifications;
 using SusuCircle.Api.Features.Payouts.GetPayoutBoard;
@@ -136,6 +137,7 @@ MemberNotificationEndpoints.Map(app);
 ResetPasswordEndpoint.Map(app);
 LogoutEndpoint.Map(app);
 ForgotPasswordEndpoint.Map(app);
+PayoutAccountEndpoints.Map(app);
 
 // ── Hangfire recurring jobs ───────────────────────────────────────────────────
 // Wrapped in try/catch: a distributed-lock timeout here (e.g. a redeploy landing
