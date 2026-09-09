@@ -1,4 +1,4 @@
-﻿using MediatR;
+using MediatR;
 using Microsoft.Extensions.Options;
 using SusuCircle.Api.Common.Exceptions;
 using SusuCircle.Api.Common.Models;
@@ -41,7 +41,7 @@ public class CheckBalanceHandler(
         var token = await tokenProvider.GetAccessTokenAsync(ct);
 
         using var req = new HttpRequestMessage(HttpMethod.Get, $"{opt.BaseUrl.TrimEnd('/')}/v1/accounts/balance");
-        req.Headers.Add("accountId", opt.ParentAccountId);
+        req.Headers.Add("accountId", opt.ResolvedAccountId);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         using var resp = await http.SendAsync(req, ct);

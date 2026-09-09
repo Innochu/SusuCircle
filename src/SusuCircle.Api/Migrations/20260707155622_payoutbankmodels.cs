@@ -56,3 +56,8 @@ namespace SusuCircle.Api.Migrations
         }
     }
 }
+
+
+//adding member to circle fails
+//  "message": "Failed to provision virtual account for chukwudi Innocent: Token issuance failed (404).",
+//https://susucircle.onrender.com/api/circles/6241ef37-e139-44d3-a4b0-61e45d6d2b32/members

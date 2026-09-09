@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -57,6 +57,17 @@ public class AutoReconciliationJob(
     public async Task RunAsync(CancellationToken ct = default)
     {
         var opt = nombaOptions.Value;
+
+        // The Transactions API needs a bearer token, which the open sandbox
+        // cannot issue. Skip quietly instead of failing this job every run —
+        // use the SimulateWebhook dev endpoint to drive contributions instead.
+        if (opt.UnauthenticatedSandboxActive)
+        {
+            logger.LogInformation(
+                "AutoReconciliationJob skipped: unauthenticated sandbox mode has no access token.");
+            return;
+        }
+
         var since = DateTime.UtcNow.Subtract(LookbackWindow);
 
         List<RawTransaction> transactions;
@@ -206,7 +217,7 @@ public class AutoReconciliationJob(
                   $"?startDate={since:yyyy-MM-ddTHH:mm:ss}&endDate={DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss}&limit=100";
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.Add("accountId", opt.ParentAccountId);
+        req.Headers.Add("accountId", opt.ResolvedAccountId);
         req.Headers.Add("Authorization", $"Bearer {token}");
 
         using var resp = await http.SendAsync(req, ct);

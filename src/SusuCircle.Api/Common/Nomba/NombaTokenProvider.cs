@@ -1,4 +1,4 @@
-﻿using System.Net.Http.Json;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
@@ -36,13 +36,26 @@ public class NombaTokenProvider(
             if (_accessToken is not null && DateTime.UtcNow < _expiresAtUtc.AddMinutes(-5))
                 return _accessToken;
 
+            // Fail with the specific config key that's missing. Without this the
+            // request goes out with an empty client_secret and Nomba answers with
+            // a generic 401, which surfaces to the caller as "virtual account
+            // provisioning failed" and says nothing about the real cause.
+            var missing = _opt.MissingSettings();
+            if (missing.Count > 0)
+            {
+                var keys = string.Join(", ", missing);
+                logger.LogError("Nomba is not configured. Missing or placeholder settings: {Missing}", keys);
+                throw new NombaApiException(
+                    $"Nomba is not configured — set {keys} (user-secrets, environment variables, or appsettings).");
+            }
+
             using var req = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/token/issue");
-            req.Headers.Add("accountId", _opt.ParentAccountId);
+            req.Headers.Add("accountId", _opt.ResolvedAccountId);
             req.Content = JsonContent.Create(new
             {
                 grant_type = "client_credentials",
-                client_id = _opt.ClientId,
-                client_secret = _opt.ClientSecret,
+                client_id = _opt.ResolvedClientId,
+                client_secret = _opt.ResolvedClientSecret,
             });
 
             using var res = await http.SendAsync(req, ct);
@@ -50,8 +63,21 @@ public class NombaTokenProvider(
 
             if (!res.IsSuccessStatusCode)
             {
-                logger.LogError("Nomba token issue failed: {Status} {Body}", res.StatusCode, body);
-                throw new NombaApiException($"Token issuance failed ({(int)res.StatusCode}).", (int)res.StatusCode);
+                logger.LogError("Nomba token issue POST {Url} failed: {Status} {Body}",
+                    new Uri(http.BaseAddress!, "/v1/auth/token/issue"), res.StatusCode, body);
+
+                // Include Nomba's own response body — a bare status code says
+                // nothing about WHY. A 404 here usually means the credentials
+                // belong to the other environment (live keys against
+                // sandbox.nomba.com, or sandbox keys against api.nomba.com), so
+                // the parent account simply is not found on this host.
+                var detail = string.IsNullOrWhiteSpace(body)
+                    ? "(empty response body)"
+                    : body.Length > 500 ? body[..500] + "…" : body;
+
+                throw new NombaApiException(
+                    $"Token issuance failed ({(int)res.StatusCode}) at {http.BaseAddress}v1/auth/token/issue: {detail}",
+                    (int)res.StatusCode);
             }
 
             var parsed = JsonSerializer.Deserialize<NombaEnvelope<TokenData>>(body,

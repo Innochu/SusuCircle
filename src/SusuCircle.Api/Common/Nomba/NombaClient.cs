@@ -190,15 +190,26 @@ public class NombaClient(
     // Attaches the accountId header + bearer token, then unwraps { code, description, data }.
     private async Task<T> SendAsync<T>(HttpMethod method, string path, object body, CancellationToken ct)
     {
-        var token = await tokenProvider.GetAccessTokenAsync(ct);
-
         var json = JsonSerializer.Serialize(body, JsonOpts);
         using var req = new HttpRequestMessage(method, path)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),
         };
-        req.Headers.Add("accountId", _opt.ParentAccountId);
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        // Nomba's open sandbox rejects nothing and requires no credentials, so
+        // skip the token round-trip entirely there. UnauthenticatedSandboxActive
+        // is false for any host other than sandbox.nomba.com, so a live call is
+        // always authenticated.
+        if (_opt.UnauthenticatedSandboxActive)
+        {
+            logger.LogDebug("Calling Nomba sandbox unauthenticated: {Method} {Path}", method, path);
+        }
+        else
+        {
+            var token = await tokenProvider.GetAccessTokenAsync(ct);
+            req.Headers.Add("accountId", _opt.ResolvedAccountId);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
 
         using var resp = await http.SendAsync(req, ct);
         var raw = await resp.Content.ReadAsStringAsync(ct);

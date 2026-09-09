@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -69,12 +69,22 @@ public class RunReconciliationSweepHandler(
         var since = cmd.Since ?? DateTime.UtcNow.AddDays(-7);
         var opt = nombaOptions.Value;
 
+        // The Transactions API needs a bearer token, which the open sandbox
+        // cannot issue — say so plainly rather than surfacing a 404 from the
+        // token endpoint that reads like a credentials bug.
+        if (opt.UnauthenticatedSandboxActive)
+        {
+            throw new NombaApiException(
+                "Reconciliation sweep needs Nomba credentials, which unauthenticated sandbox mode does not have. " +
+                "Use the SimulateWebhook dev endpoint to record contributions while in this mode.");
+        }
+
         // ── Call Nomba's Transactions API directly ──
         var token = await tokenProvider.GetAccessTokenAsync(ct);
         var url = $"{opt.BaseUrl.TrimEnd('/')}/v1/transactions/accounts?startDate={since:yyyy-MM-ddTHH:mm:ss}&endDate={DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss}&limit=100";
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.Add("accountId", opt.ParentAccountId);
+        req.Headers.Add("accountId", opt.ResolvedAccountId);
         req.Headers.Add("Authorization", $"Bearer {token}");
 
         using var resp = await http.SendAsync(req, ct);
