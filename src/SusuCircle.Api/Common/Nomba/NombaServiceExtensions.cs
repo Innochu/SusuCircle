@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using SusuCircle.Api.Common.Payments;
 using SusuCircle.Api.Common.Paystack;
 
 namespace SusuCircle.Api.Common.Nomba;
@@ -7,10 +8,12 @@ public static class NombaServiceExtensions
 {
     // Call from Program.cs:  builder.Services.AddPaymentProvider(builder.Configuration);
     //
-    // Binds INombaClient to whichever payment provider "Payments:Provider" names
-    // ("Nomba" or "Paystack"; Nomba remains the default so existing deployments
-    // are unaffected). Both implement the same interface, so nothing downstream
-    // — handlers, reconciliation, payouts — knows or cares which one is live.
+    // Providers: "Nomba" (default), "Paystack", "Stub" (in-process, no real money).
+    //
+    // Binds INombaClient to whichever payment provider "Payments:Provider" names.
+    // Nomba remains the default so existing deployments are unaffected. All three
+    // implement the same interface, so nothing downstream — handlers,
+    // reconciliation, payouts — knows or cares which one is live.
     public static IServiceCollection AddPaymentProvider(this IServiceCollection services, IConfiguration config)
     {
         services.Configure<NombaOptions>(config.GetSection(NombaOptions.SectionName));
@@ -18,6 +21,7 @@ public static class NombaServiceExtensions
 
         var provider = config["Payments:Provider"] ?? "Nomba";
         var usePaystack = provider.Equals("Paystack", StringComparison.OrdinalIgnoreCase);
+        var useStub = provider.Equals("Stub", StringComparison.OrdinalIgnoreCase);
 
         // Registered unconditionally, even under Paystack: the Dev diagnostics
         // handlers (NombaCheck, CheckBalance) and the reconciliation sweep take
@@ -30,7 +34,14 @@ public static class NombaServiceExtensions
             http.Timeout = TimeSpan.FromSeconds(30);
         });
 
-        if (usePaystack)
+        if (useStub)
+        {
+            // No HttpClient: the stub talks to nothing. Scoped to match the
+            // lifetime the typed-client registrations give the other providers,
+            // so handlers see identical injection semantics either way.
+            services.AddScoped<INombaClient, StubPaymentClient>();
+        }
+        else if (usePaystack)
         {
             services.AddHttpClient<INombaClient, PaystackClient>((sp, http) =>
             {
