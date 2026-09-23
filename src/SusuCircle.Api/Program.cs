@@ -37,6 +37,7 @@ using SusuCircle.Api.Features.Payouts.TriggerPayout;
 using SusuCircle.Api.Features.Reconciliation.Match;
 using SusuCircle.Api.Features.Reconciliation.sweep;
 using SusuCircle.Api.Features.Webhooks.NombaWebhook;
+using SusuCircle.Api.Features.Webhooks.PaystackWebhook;
 using SusuCircle.Api.Infrastructure;
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ builder.Services
      .AddResendEmail(builder.Configuration)
     .AddCircleHub()
     .AddAntiforgery()
-    .AddNombaClient(builder.Configuration)
+    .AddPaymentProvider(builder.Configuration)
     .AddEndpointsApiExplorer()
     .AddBrevoEmail(builder.Configuration)
     .AddScoped<AutoReconciliationJob>()
@@ -123,6 +124,7 @@ TriggerPayoutEndpoint.Map(app);
 GetPayoutsEndpoint.Map(app);
 NotificationEndpoints.Map(app);
 NombaWebhookEndpoint.Map(app);
+PaystackWebhookEndpoint.Map(app);
 AdminNotificationEndpoints.Map(app);
 MatchTransactionEndpoints.Map(app);
 GetPayoutBoardEndpoint.Map(app);
