@@ -79,6 +79,7 @@ public static class ServiceExtensions
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<ICreditScoreService, CreditScoreService>();
+        services.AddScoped<ICollectionAccountService, CollectionAccountService>();
         return services;
     }
 

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SusuCircle.Api.Common.Exceptions;
 using SusuCircle.Api.Common.Models;
 using SusuCircle.Api.Common.Persistence;
+using SusuCircle.Api.Common.Services;
 
 namespace SusuCircle.Api.Features.Circles.CreateCircle;
 
@@ -30,7 +31,14 @@ public record CircleDto(
     int CurrentMemberCount,
     CircleStatus Status,
     DateTime StartDate,
-    DateTime NextContributionDate);
+    DateTime NextContributionDate,
+    // The circle's pooled collection account, provisioned as part of creation.
+    // CollectionAccountIsPlaceholder is TRUE when the provider could not be
+    // reached: the circle is usable, but the account must be provisioned by an
+    // admin before it can actually receive or disburse funds.
+    string? CollectionAccountNumber = null,
+    string? CollectionBankName = null,
+    bool CollectionAccountIsPlaceholder = false);
 
 // ── Validator ─────────────────────────────────────────────────────────────────
 
@@ -53,7 +61,10 @@ public class CreateCircleValidator : AbstractValidator<CreateCircleCommand>
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
-public class CreateCircleHandler(AppDbContext db) : IRequestHandler<CreateCircleCommand, CircleDto>
+public class CreateCircleHandler(
+    AppDbContext db,
+    ICollectionAccountService collectionAccounts,
+    ILogger<CreateCircleHandler> logger) : IRequestHandler<CreateCircleCommand, CircleDto>
 {
     public async Task<CircleDto> Handle(CreateCircleCommand cmd, CancellationToken ct)
     {
@@ -78,10 +89,35 @@ public class CreateCircleHandler(AppDbContext db) : IRequestHandler<CreateCircle
             Status               = CircleStatus.Active
         };
 
+        // Provision the pooled collection account. A provider outage must NOT
+        // block circle creation — everything else about the circle still works,
+        // and a coordinator being unable to set one up because a third party is
+        // down is the worse failure. So this never throws: if provisioning
+        // fails it returns a placeholder that is obviously not fundable
+        // (account number "UNPROVISIONED") carrying the error that caused it,
+        // and an admin provisions the real account afterwards via
+        // POST /api/circles/{id}/collection-account, which upgrades that same
+        // row in place.
+        var collectionAccount = await collectionAccounts.ProvisionOrPlaceholderAsync(circle, ct);
+
         db.Circles.Add(circle);
+        db.CollectionAccounts.Add(collectionAccount);
         await db.SaveChangesAsync(ct);
 
-        return MapToDto(circle, 0);
+        if (collectionAccount.IsPlaceholder)
+        {
+            logger.LogWarning(
+                "Circle {CircleId} created with a PLACEHOLDER collection account — provisioning failed: {Error}. "
+                + "An admin must run POST /api/circles/{CircleId}/collection-account to provision the real one.",
+                circle.Id, collectionAccount.ProvisioningError, circle.Id);
+        }
+        else
+        {
+            logger.LogInformation("Circle {CircleId} created with collection account {Account} ({Bank})",
+                circle.Id, collectionAccount.AccountNumber, collectionAccount.BankName);
+        }
+
+        return MapToDto(circle, 0, collectionAccount);
     }
 
     private static DateTime ComputeNextDate(DateTime start, ContributionFrequency freq) => freq switch
@@ -92,9 +128,11 @@ public class CreateCircleHandler(AppDbContext db) : IRequestHandler<CreateCircle
         _ => start.AddMonths(1)
     };
 
-    public static CircleDto MapToDto(Circle c, int memberCount) => new(
+    public static CircleDto MapToDto(Circle c, int memberCount, CollectionAccount? collectionAccount = null) => new(
         c.Id, c.Name, c.Plan, c.ContributionAmount, c.Frequency,
-        c.MaxMembers, memberCount, c.Status, c.StartDate, c.NextContributionDate);
+        c.MaxMembers, memberCount, c.Status, c.StartDate, c.NextContributionDate,
+        collectionAccount?.AccountNumber, collectionAccount?.BankName,
+        collectionAccount?.IsPlaceholder ?? false);
 }
 
 // ── Endpoint ──────────────────────────────────────────────────────────────────

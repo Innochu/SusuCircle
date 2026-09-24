@@ -56,6 +56,7 @@ public class Circle
     public ICollection<Member> Members { get; set; } = new List<Member>();
     public ICollection<Contribution> Contributions { get; set; } = new List<Contribution>();
     public ICollection<Payout> Payouts { get; set; } = new List<Payout>();
+    public ICollection<CollectionAccount> CollectionAccounts { get; set; } = new List<CollectionAccount>();
 }
 
 public class Member
@@ -152,3 +153,89 @@ public record ApiResponse<T>(bool Success, T? Data, string? Message = null, IEnu
 }
 
 public record PagedResponse<T>(IEnumerable<T> Items, int Total, int Page, int PageSize);
+
+// ── Collection accounts ───────────────────────────────────────────────────────
+// A circle's pooled account: every member contribution is swept into it, and
+// every payout is debited from it. Provisioned automatically at circle creation.
+//
+// IMPORTANT — what "balance" means here. Funds paid into any provider virtual
+// account are immediately routed into the merchant's parent wallet by the
+// provider itself (see TriggerPayoutHandler for why payouts must therefore go to
+// a real external bank account, never back into a VA). So this balance is a
+// LEDGER position over money that already sits pooled upstream — it records what
+// this circle is owed out of that pool. It is not an independently held balance,
+// and a sweep is a bookkeeping move, not a wire transfer.
+
+public enum CollectionEntryDirection { Credit, Debit }
+
+public class CollectionAccount
+{
+    public Guid Id { get; set; }
+    public Guid CircleId { get; set; }
+
+    // Which payment provider issued the account — "Nomba", "Paystack", "Stub".
+    // Recorded per account so a provider switch leaves the old account readable.
+    public string Provider { get; set; } = string.Empty;
+
+    // The provider's own handle for the account (accountRef), plus the NUBAN
+    // details we can actually show people.
+    public string? ExternalAccountId { get; set; }
+    public string AccountNumber { get; set; } = string.Empty;
+    public string AccountName { get; set; } = string.Empty;
+    public string BankName { get; set; } = string.Empty;
+    public string BankCode { get; set; } = string.Empty;
+
+    // Exactly one active account per circle, enforced by a filtered unique index
+    // (see CollectionAccountConfiguration). Superseded accounts stay as history:
+    // closed cycles must remain explainable, and a provider migration reissues
+    // the account rather than rewriting the old one.
+    public bool IsActive { get; set; } = true;
+
+    // TRUE when the provider could not be reached at circle creation and this
+    // row is a stand-in, not a real account. Circle creation deliberately does
+    // not fail in that case — a provider outage must not block a coordinator
+    // from setting up their circle — so the circle gets a placeholder that is
+    // obviously not fundable, and an admin provisions the real account later
+    // via the backfill endpoint, which upgrades THIS row in place so any ledger
+    // entries already raised against it stay attached.
+    public bool IsPlaceholder { get; set; }
+
+    // Why provisioning failed, kept so the admin retrying it can see the cause
+    // rather than guessing. Cleared when the placeholder is upgraded.
+    public string? ProvisioningError { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? DeactivatedAt { get; set; }
+
+    public Circle Circle { get; set; } = null!;
+    public ICollection<CollectionLedgerEntry> Entries { get; set; } = new List<CollectionLedgerEntry>();
+}
+
+public class CollectionLedgerEntry
+{
+    public Guid Id { get; set; }
+    public Guid CollectionAccountId { get; set; }
+    public Guid CircleId { get; set; }
+
+    // Whose money this is. Set on both directions: a credit is a member's
+    // contribution coming in, a debit is that circle paying a member out.
+    public Guid? MemberId { get; set; }
+
+    public int CycleNumber { get; set; }
+    public CollectionEntryDirection Direction { get; set; }
+    public decimal Amount { get; set; }
+
+    // What the entry was raised against, so a balance can always be traced back
+    // to the contribution or payout that caused it.
+    public Guid? ContributionId { get; set; }
+    public Guid? PayoutId { get; set; }
+
+    // Idempotency key, uniquely indexed. A contribution sweep uses
+    // "SWEEP-{contributionId}", so re-running a sweep cannot double-credit.
+    public string Reference { get; set; } = string.Empty;
+
+    public string Description { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public CollectionAccount CollectionAccount { get; set; } = null!;
+}

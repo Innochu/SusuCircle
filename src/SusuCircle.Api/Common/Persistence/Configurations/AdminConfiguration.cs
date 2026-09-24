@@ -85,3 +85,55 @@ public class NotificationConfiguration : IEntityTypeConfiguration<Notification>
         b.HasOne(x => x.Member).WithMany(m => m.Notifications).HasForeignKey(x => x.MemberId).OnDelete(DeleteBehavior.Cascade);
     }
 }
+
+public class CollectionAccountConfiguration : IEntityTypeConfiguration<CollectionAccount>
+{
+    public void Configure(EntityTypeBuilder<CollectionAccount> b)
+    {
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Provider).IsRequired().HasMaxLength(40);
+        b.Property(x => x.AccountNumber).IsRequired().HasMaxLength(20);
+        b.Property(x => x.AccountName).IsRequired().HasMaxLength(150);
+        b.Property(x => x.BankName).IsRequired().HasMaxLength(120);
+        b.Property(x => x.BankCode).HasMaxLength(20);
+        b.Property(x => x.ExternalAccountId).HasMaxLength(100);
+        b.Property(x => x.ProvisioningError).HasMaxLength(500);
+
+        // One ACTIVE collection account per circle, enforced in the database
+        // rather than only in handler code — two live accounts would make
+        // "the pool for this cycle" ambiguous for both reconciliation and
+        // payouts. Superseded rows are exempt so history is still retained.
+        b.HasIndex(x => x.CircleId)
+            .IsUnique()
+            .HasFilter("\"IsActive\" = true");
+
+        b.HasOne(x => x.Circle)
+            .WithMany(c => c.CollectionAccounts)
+            .HasForeignKey(x => x.CircleId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public class CollectionLedgerEntryConfiguration : IEntityTypeConfiguration<CollectionLedgerEntry>
+{
+    public void Configure(EntityTypeBuilder<CollectionLedgerEntry> b)
+    {
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Amount).HasColumnType("decimal(18,2)");
+        b.Property(x => x.Direction).HasConversion<string>();
+        b.Property(x => x.Reference).IsRequired().HasMaxLength(100);
+        b.Property(x => x.Description).HasMaxLength(300);
+
+        // Idempotency. A sweep keys every credit to "SWEEP-{contributionId}",
+        // so replaying it is rejected by the database instead of silently
+        // double-crediting the circle.
+        b.HasIndex(x => x.Reference).IsUnique();
+
+        b.HasIndex(x => new { x.CollectionAccountId, x.CreatedAt });
+
+        b.HasOne(x => x.CollectionAccount)
+            .WithMany(a => a.Entries)
+            .HasForeignKey(x => x.CollectionAccountId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}

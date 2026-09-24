@@ -14,6 +14,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<UnmatchedTransaction> UnmatchedTransactions => Set<UnmatchedTransaction>();
     public DbSet<AdminNotification> AdminNotifications => Set<AdminNotification>();
+    public DbSet<CollectionAccount> CollectionAccounts => Set<CollectionAccount>();
+    public DbSet<CollectionLedgerEntry> CollectionLedgerEntries => Set<CollectionLedgerEntry>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -23,6 +25,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         builder.ApplyConfiguration(new ContributionConfiguration());
         builder.ApplyConfiguration(new PayoutConfiguration());
         builder.ApplyConfiguration(new NotificationConfiguration());
+        builder.ApplyConfiguration(new CollectionAccountConfiguration());
+        builder.ApplyConfiguration(new CollectionLedgerEntryConfiguration());
         base.OnModelCreating(builder);
     }
 }

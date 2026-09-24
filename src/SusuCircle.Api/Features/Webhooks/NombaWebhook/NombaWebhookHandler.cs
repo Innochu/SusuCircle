@@ -58,6 +58,7 @@ public class NombaWebhookHandler(
     IAdminNotifier adminNotifier,
     IHubContext<CircleHub> hub,
     ICreditScoreService creditScore,
+    ICollectionAccountService collectionAccounts,
     ILogger<NombaWebhookHandler> logger)
     : IRequestHandler<ProcessWebhookCommand, WebhookResult>
 {
@@ -245,6 +246,12 @@ public class NombaWebhookHandler(
         string adminTitle;
         string adminBody;
 
+        // Whether the collection ledger debit raised at payout time still
+        // stands. TriggerPayout debits the pool as soon as the transfer is
+        // accepted, so a payout that later fails or is refunded must give that
+        // money back — otherwise the pool permanently understates its balance.
+        bool reverseLedgerDebit = false;
+
         switch (payload.EventType)
         {
             case "payout_success":
@@ -259,6 +266,7 @@ public class NombaWebhookHandler(
                 payout.Status = PayoutStatus.Failed;
                 payout.FailureReason = "Payout failed per Nomba webhook.";
                 payout.RetryCount++;
+                reverseLedgerDebit = true;
                 adminEventType = AdminNotificationType.PayoutFailed;
                 adminTitle = "Payout failed";
                 adminBody = $"Payout to {payout.Member.Name} failed · {payout.Circle.Name} Cycle {payout.CycleNumber} — will retry";
@@ -266,6 +274,7 @@ public class NombaWebhookHandler(
             case "payout_refund":
                 payout.Status = PayoutStatus.Failed;
                 payout.FailureReason = "Payout was refunded back to merchant account.";
+                reverseLedgerDebit = true;
                 adminEventType = AdminNotificationType.PayoutFailed;
                 adminTitle = "Payout refunded";
                 adminBody = $"Payout to {payout.Member.Name} was refunded · {payout.Circle.Name} Cycle {payout.CycleNumber}";
@@ -275,6 +284,19 @@ public class NombaWebhookHandler(
         }
 
         await db.SaveChangesAsync(ct);
+
+        if (reverseLedgerDebit)
+        {
+            await collectionAccounts.ReversePayoutDebitAsync(payout.Id, ct);
+        }
+        else
+        {
+            // payout_success. Normally TriggerPayout already raised this debit,
+            // in which case this is a no-op — but it also covers a payout that
+            // settled without that debit ever landing (a circle backfilled
+            // mid-flight, or an older payout predating the ledger).
+            await collectionAccounts.RecordPayoutDebitAsync(payout, ct);
+        }
 
         // Admin-facing: NEW
         await adminNotifier.NotifyAsync(payout.Circle.AdminId, adminEventType, adminTitle, adminBody,

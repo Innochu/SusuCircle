@@ -23,6 +23,7 @@ public class TriggerPayoutValidator : AbstractValidator<TriggerPayoutCommand>
 public class TriggerPayoutHandler(
     AppDbContext db, INombaClient nomba,
     INotificationService notifications,
+    ICollectionAccountService collectionAccounts,
     ILogger<TriggerPayoutHandler> logger)
     : IRequestHandler<TriggerPayoutCommand, PayoutDto>
 {
@@ -84,6 +85,17 @@ public class TriggerPayoutHandler(
             // data.transaction.merchantTxRef — that's OUR reference, so this is the
             // only value NombaWebhookHandler.HandlePayoutEventAsync can match against.
             payout.NombaTransferRef = transferRef;
+
+            // Draw the pooled collection balance down by what just left. Without
+            // this the rotation path credits the pool on every sweep and never
+            // debits it, so the balance steadily overstates the money actually
+            // available — the direct disburse endpoint has always debited, and
+            // these two paths must agree. Recorded here rather than only on
+            // success because a PENDING transfer is still money in flight; the
+            // payout_failed / payout_refund webhook reverses it if it does not
+            // stand. Idempotent on the payout id, and a no-op for circles with
+            // no collection account yet.
+            await collectionAccounts.RecordPayoutDebitAsync(payout, ct);
 
             // CORRECTED: a transfer can come back PENDING — the real outcome then
             // arrives later via the payout_success/payout_failed webhook. Only mark
